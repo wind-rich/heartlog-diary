@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "心意簿 — 记录伴侣的日常、偏好与回忆（本地优先 PWA）",
+  "license": "MIT",
   "scripts": {
     "dev": "vite --host",
     "prebuild": "node scripts/gen-icons.mjs",
