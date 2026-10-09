@@ -266,13 +266,20 @@ export interface MetaRow<T = unknown> {
   value: T
 }
 
+/** AI 接入方式 */
+export type AIProvider = 'own' | 'cloud'
+
 /** AI 配置 */
 export interface AIConfig {
   enabled: boolean
+  /** 接入方式：own = 自备 OpenAI 兼容接口；cloud = 云服务免密钥模型调用 */
+  provider: AIProvider
   /** OpenAI 兼容的接口地址，例如 https://api.deepseek.com/v1 */
   baseUrl: string
   apiKey: string
   model: string
+  /** 云服务模式下选用的模型 id（取值来自 cloud.llm.models.list） */
+  cloudModel?: string
   /** 是否经过自建代理（服务端保存密钥，浏览器端不存 Key） */
   viaProxy: boolean
   proxyUrl?: string

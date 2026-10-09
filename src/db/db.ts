@@ -70,9 +70,11 @@ export function nowISO(): string {
 
 export const DEFAULT_AI: AIConfig = {
   enabled: false,
+  provider: 'own',
   baseUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
   model: 'deepseek-chat',
+  cloudModel: '',
   viaProxy: false,
   proxyUrl: '',
   temperature: 0.7,

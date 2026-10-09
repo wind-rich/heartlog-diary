@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Info,
   Loader2,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -17,16 +18,17 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react'
-import { aiChat, aiReady } from '../lib/ai'
+import { aiChat, aiReady, listCloudModels, type CloudModelOption } from '../lib/ai'
 import { db } from '../db/db'
 import { exportBackup, importBackupZip, storageEstimate, wipeAllData, type ImportMode, type ImportResult } from '../lib/backup'
 import { fmtSize } from '../lib/photo'
 import { Field, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../components/ui'
+import { CloudPanel } from '../components/CloudPanel'
 import { useApp } from '../state/app'
 
 export default function SettingsPage() {
   const nav = useNavigate()
-  const { aiConfig, saveAIConfig, prefs, savePrefs } = useApp()
+  const { aiConfig, saveAIConfig, prefs, savePrefs, cloudUser } = useApp()
   const toast = useToast()
   const confirm = useConfirm()
 
@@ -36,6 +38,10 @@ export default function SettingsPage() {
   const [proxyUrl, setProxyUrl] = useState(aiConfig.proxyUrl ?? '')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [cloudModels, setCloudModels] = useState<CloudModelOption[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsErr, setModelsErr] = useState('')
+  const [modelsLoaded, setModelsLoaded] = useState(false)
 
   const [storage, setStorage] = useState<{ usage: number; quota: number } | undefined>()
   const [importOpen, setImportOpen] = useState(false)
@@ -62,12 +68,39 @@ export default function SettingsPage() {
     await saveAIConfig(patch)
   }
 
+  const loadModels = async () => {
+    setModelsLoading(true)
+    setModelsErr('')
+    try {
+      setCloudModels(await listCloudModels())
+    } catch (e) {
+      setCloudModels([])
+      setModelsErr((e as Error).message)
+    } finally {
+      setModelsLoading(false)
+      setModelsLoaded(true)
+    }
+  }
+
+  // 切到云服务模式且已登录时，主动拉一次模型列表（空列表也是合法结果）
+  useEffect(() => {
+    if (aiConfig.provider === 'cloud' && cloudUser && !modelsLoaded) void loadModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiConfig.provider, cloudUser, modelsLoaded])
+
   const testConnection = async () => {
     setTesting(true)
     setTestResult(null)
     try {
       const testConfig = { ...aiConfig, baseUrl, apiKey, model, proxyUrl, enabled: true }
-      const reply = await aiChat(testConfig, [{ role: 'user', content: '请只回复两个字：可用' }], { maxTokens: 20 })
+      const reply = await aiChat(
+        testConfig,
+        [
+          { role: 'system', content: '你是连接测试助手，只回复用户要求的内容。' },
+          { role: 'user', content: '请只回复两个字：可用' },
+        ],
+        { maxTokens: 20 },
+      )
       setTestResult({ ok: true, msg: `连接成功：${reply.slice(0, 40)}` })
     } catch (e) {
       const err = e as { message: string; detail?: string }
@@ -120,7 +153,11 @@ export default function SettingsPage() {
             <Sparkles size={15} className="text-rose-deep" /> AI 增强
           </>
         }
-        action={<Tag color={aiReady(aiConfig) ? '#8CBF9B' : '#B9ADA2'}>{aiReady(aiConfig) ? '已启用' : '未启用'}</Tag>}
+        action={
+          <Tag color={aiReady(aiConfig, Boolean(cloudUser)) ? '#8CBF9B' : '#B9ADA2'}>
+            {aiReady(aiConfig, Boolean(cloudUser)) ? '已启用' : '未启用'}
+          </Tag>
+        }
       >
         <Switch
           checked={aiConfig.enabled}
@@ -133,20 +170,60 @@ export default function SettingsPage() {
           <Field label="接入方式">
             <Segmented
               options={[
+                { value: 'cloud', label: '云服务（免密钥）' },
                 { value: 'direct', label: '直连模型接口' },
-                { value: 'proxy', label: '经自建代理（推荐）' },
+                { value: 'proxy', label: '经自建代理' },
               ]}
-              value={aiConfig.viaProxy ? 'proxy' : 'direct'}
-              onChange={(v) => persistAI({ viaProxy: v === 'proxy' })}
+              value={aiConfig.provider === 'cloud' ? 'cloud' : aiConfig.viaProxy ? 'proxy' : 'direct'}
+              onChange={(v) => {
+                if (v === 'cloud') void persistAI({ provider: 'cloud' })
+                else if (v === 'proxy') void persistAI({ provider: 'own', viaProxy: true })
+                else void persistAI({ provider: 'own', viaProxy: false })
+              }}
             />
             <p className="mt-1.5 text-[12px] text-ink-300 leading-relaxed">
-              {aiConfig.viaProxy
-                ? '请求会发到你自己的代理服务，密钥保存在服务端，浏览器里不存 Key。项目里附带 server/proxy.mjs 可直接运行。'
-                : '密钥会保存在本机浏览器的 IndexedDB 里，只在你自己的设备上。缺点是部分模型服务的跨域（CORS）可能被浏览器拦截。'}
+              {aiConfig.provider === 'cloud'
+                ? '由云服务代付模型调用，不需要自己填 API Key。需要先在下面的「云服务」里登录。'
+                : aiConfig.viaProxy
+                  ? '请求会发到你自己的代理服务，密钥保存在服务端，浏览器里不存 Key。项目里附带 server/proxy.mjs 可直接运行。'
+                  : '密钥会保存在本机浏览器的 IndexedDB 里，只在你自己的设备上。缺点是部分模型服务的跨域（CORS）可能被浏览器拦截。'}
             </p>
           </Field>
 
-          {aiConfig.viaProxy ? (
+          {aiConfig.provider === 'cloud' ? (
+            !cloudUser ? (
+              <p className="text-[12px] text-ink-300 leading-relaxed">
+                还没登录云服务。请在下面的「云服务」里用邮箱登录，登录后这里会自动列出可用模型。
+              </p>
+            ) : (
+              <>
+                <Field label="模型" hint="取自云服务可用模型列表；选「自动选择」时用列表里的第一个。">
+                  <div className="flex gap-2">
+                    <select
+                      className="input flex-1"
+                      value={aiConfig.cloudModel ?? ''}
+                      onChange={(e) => void persistAI({ cloudModel: e.target.value })}
+                    >
+                      <option value="">自动选择（依次尝试可用模型）</option>
+                      {cloudModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="btn-ghost shrink-0" onClick={loadModels} disabled={modelsLoading}>
+                      {modelsLoading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                      刷新
+                    </button>
+                  </div>
+                </Field>
+                {modelsErr && <p className="text-[12px] text-[#9B3B2E]">{modelsErr}</p>}
+                {!modelsLoading && !modelsErr && modelsLoaded && cloudModels.length === 0 && (
+                  <p className="text-[12px] text-[#9B3B2E]">云服务当前没有可用模型，请到云服务管理面板确认模型是否已启用。</p>
+                )}
+              </>
+            )
+          ) : aiConfig.viaProxy ? (
             <Field label="代理地址" hint="例：http://127.0.0.1:8787/v1（脚本默认监听 8787）。">
               <input className="input" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} onBlur={() => persistAI({ proxyUrl })} />
             </Field>
@@ -168,15 +245,17 @@ export default function SettingsPage() {
             </>
           )}
 
-          <Field label="模型名">
-            <input
-              className="input"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              onBlur={() => persistAI({ model })}
-              placeholder="deepseek-chat / gpt-4o-mini / qwen-plus …"
-            />
-          </Field>
+          {aiConfig.provider !== 'cloud' && (
+            <Field label="模型名">
+              <input
+                className="input"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                onBlur={() => persistAI({ model })}
+                placeholder="deepseek-chat / gpt-4o-mini / qwen-plus …"
+              />
+            </Field>
+          )}
 
           <button className="btn-ghost w-full" onClick={testConnection} disabled={testing}>
             {testing ? <Loader2 size={15} className="animate-spin" /> : <Cloud size={15} />}
@@ -194,6 +273,9 @@ export default function SettingsPage() {
           )}
         </div>
       </SectionCard>
+
+      {/* 云服务 */}
+      <CloudPanel />
 
       {/* 照片 */}
       <SectionCard

@@ -1,4 +1,5 @@
 import type { AIConfig, Entry, PortraitInsight } from '../db/types'
+import { cloud } from './cloud'
 import { EVIDENCE_TYPES, entryTypeMeta, HEALTH_STATUS, prefCategoryMeta, WISH_STATUS } from './constants'
 import { fmtDate, fmtTime, parseAny, toDateStr } from './date'
 import { moodLabelOf } from './stats'
@@ -20,10 +21,100 @@ export class AIError extends Error {
   }
 }
 
-export function aiReady(config: AIConfig): boolean {
+/**
+ * AI 是否可用。
+ * 云服务模式额外要求已登录（模型调用由云服务鉴权，不需要用户自备 Key）。
+ */
+export function aiReady(config: AIConfig, cloudSignedIn = false): boolean {
   if (!config.enabled) return false
+  if (config.provider === 'cloud') return cloudSignedIn
   if (config.viaProxy) return Boolean(config.proxyUrl)
   return Boolean(config.baseUrl && config.apiKey && config.model)
+}
+
+/* ------------------------------------------------------------------ */
+/* 云服务免密钥模型调用                                                */
+/* ------------------------------------------------------------------ */
+
+export interface CloudModelOption {
+  id: string
+  name: string
+}
+
+/** 拉取云服务可用模型列表（供设置页选择）。空列表是合法结果，不做兜底。 */
+export async function listCloudModels(): Promise<CloudModelOption[]> {
+  const models = await cloud.llm.models.list()
+  return (models ?? [])
+    .filter((m) => m.disabled !== true && m.enabled !== false)
+    .map((m) => ({ id: m.id, name: m.name || m.id }))
+}
+
+/** 云服务要求首条消息必须是应用自有的 system 提示，缺失时补一条兜底 */
+const CLOUD_FALLBACK_SYSTEM =
+  '你是「心意簿」的助手。只依据用户提供的记录作答，不编造事实；找不到依据时直说记录不足。'
+
+function cloudLlmErrorText(err: unknown): string {
+  const e = err as { error?: { code?: string | null; message?: string }; message?: string } | undefined
+  const code = e?.error?.code ?? ''
+  if (code.startsWith('auth_')) return '云服务凭证无效，或当前域名未被授权'
+  if (code.startsWith('quota_')) return '云服务额度已用尽或触发限流，请稍后再试'
+  if (code.startsWith('gateway_') || code.startsWith('model_')) return '模型服务暂时不可用，请稍后重试'
+  if (code.startsWith('request_')) return `请求参数不合法：${e?.error?.message ?? code}`
+  if (code.startsWith('internal_')) return '云服务内部错误，请稍后重试'
+  return e?.error?.message || e?.message || '未知错误'
+}
+
+async function cloudChat(
+  config: AIConfig,
+  messages: ChatMessage[],
+  opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal },
+): Promise<string> {
+  const usable = await listCloudModels()
+  if (usable.length === 0) throw new AIError('云服务当前没有可用的模型', '请在云服务管理面板确认模型是否已启用。')
+
+  const list: ChatMessage[] =
+    messages.length > 0 && messages[0].role === 'system'
+      ? messages
+      : [{ role: 'system', content: CLOUD_FALLBACK_SYSTEM }, ...messages]
+
+  // 用户显式指定了模型就只用它；否则依次尝试前几个可用模型。
+  // 这样做的原因：模型列表里存在「路由型」条目（例如 auto），它们可能不产出内容，
+  // 只认名称去猜是不可靠的，所以按实际返回结果决定是否继续尝试下一个。
+  const explicit = config.cloudModel ? usable.find((m) => m.id === config.cloudModel) : undefined
+  const candidates = explicit ? [explicit] : usable.slice(0, 4)
+
+  const tried: string[] = []
+  let lastErr: unknown = null
+
+  for (const model of candidates) {
+    if (opts.signal?.aborted) throw new AIError('已取消')
+    let text = ''
+    try {
+      for await (const chunk of cloud.llm.chat.completions.create({
+        model: model.id,
+        messages: list as never,
+        stream: true,
+        temperature: opts.temperature ?? config.temperature ?? 0.7,
+        max_tokens: opts.maxTokens ?? 2400,
+        signal: opts.signal,
+      })) {
+        const delta = chunk.choices?.[0]?.delta
+        if (delta?.content) text += delta.content
+      }
+    } catch (err) {
+      if (opts.signal?.aborted) throw new AIError('已取消')
+      lastErr = err
+      tried.push(`${model.name}：调用失败`)
+      continue
+    }
+    if (text.trim()) return text.trim()
+    tried.push(`${model.name}：返回空内容`)
+  }
+
+  if (lastErr && tried.every((t) => t.endsWith('调用失败'))) {
+    throw new AIError('云服务模型调用失败', cloudLlmErrorText(lastErr))
+  }
+  throw new AIError('云服务模型没有返回内容', `已尝试：${tried.join('；')}。可以到设置里手动指定一个模型。`)
 }
 
 function endpointOf(config: AIConfig): string {
@@ -41,6 +132,7 @@ export async function aiChat(
   opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
   if (!config.enabled) throw new AIError('AI 功能未启用')
+  if (config.provider === 'cloud') return cloudChat(config, messages, opts)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (!config.viaProxy && config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`
 

@@ -2,7 +2,7 @@
 
 记录伴侣的基础信息、兴趣偏好、照片、日常生活、心情、健康和重要事件，支持回顾总结与导出备份。
 
-**本地优先**：所有记录默认只存在你自己的设备（浏览器 IndexedDB）里，应用本身不上传任何数据。AI 是可选的增强功能，不配置也能完整使用。
+**本地优先**：所有记录默认只存在你自己的设备（浏览器 IndexedDB）里；不登录时应用**不会上传任何数据**，完全离线可用。AI 与云端备份都是可选功能。
 
 ---
 
@@ -94,6 +94,44 @@ npm run proxy          # 默认监听 http://127.0.0.1:8787
 
 ---
 
+## 云服务（可选）
+
+应用已接入 WorkBuddy 云服务，提供四块能力，共用一个环境：**邮箱登录/注册**、**云端备份与恢复**、**免密钥模型调用**、**云端对象存储**。
+
+### 设计取舍：本地优先，云端只做备份
+
+本地 IndexedDB 始终是**唯一真相源**。云端不做双向实时同步，只做两件事：
+
+- **备份**：把当前全部记录 + 照片整体推上去；
+- **恢复**：换设备时整体拉回来（「合并」只补本机没有的，不覆盖你改过的内容；「覆盖」先清空再完整还原）。
+
+这样没有冲突合并的复杂度，也不会因为网络问题动到你本地的记录。照片在云端**按 photoId 去重存放**，多份备份共用同一批文件，不会重复占用空间。
+
+对象存储布局：
+
+```
+users/<uid>/heartlog/photos/<photoId>.<ext>          照片原图（去重）
+users/<uid>/heartlog/photos/thumb_<photoId>.<ext>    缩略图
+users/<uid>/heartlog/backups/<backupKey>/backup.json 一次备份的完整载荷
+```
+
+数据库 `heartlog_backups` 表只登记元信息（时间、条数、大小、照片 id 列表），用于在界面上列出历史备份与清理孤儿照片。表启用了 RLS，四类策略都是 `owner_id = auth.uid()`，**数据按账号隔离，其他账号看不到**；前端不发送 `owner_id`，由数据库的 `DEFAULT auth.uid()` 填。
+
+### 免密钥 AI
+
+设置 → AI 增强 → 接入方式选「云服务（免密钥）」，登录后即可使用，**不需要自己填 API Key**。模型列表取自云服务（`cloud.llm.models.list`）；不指定模型时会依次尝试前几个可用模型——因为列表里存在路由型条目（如 `auto`）可能不产出内容，只靠名称猜是不可靠的。
+
+另外两种接入方式（直连 / 自建代理）仍然保留，用于接你自己的模型服务。
+
+### 配置
+
+云配置集中在 `src/lib/cloudConfig.ts` 的 `CLOUD_PUBLIC_CONFIG`，是**唯一**允许进入前端产物的云配置（`endpoint` / `publishableKey` / `oauthRelayBaseUrl` / `resourceId`）。这四个值本身不带权限，鉴权由服务端按 Origin 精确匹配完成。
+
+> ⚠️ 改动发布域名后 `endpoint` 会失效，需要重新开通/发布并更新该文件。
+> ⚠️ 不要把 endpoint 写到别处，也不要从 `location` / 环境变量推导。
+
+---
+
 ## 导出与备份
 
 三种留存方式的区别：
@@ -123,17 +161,21 @@ npm run proxy          # 默认监听 http://127.0.0.1:8787
 - PWA：自定义 `manifest.webmanifest` + Service Worker（离线可用）
 - 农历/星座/节日：`lunar-javascript`（纯本地算法）
 - 导出：JSZip + 专用打印页
+- 云服务：`@tencent-ai/workbuddy-cloud-sdk`（Auth / Database / Storage / LLM 四模块共用一个环境）
 
 ```
 src/
   db/          types.ts（数据模型）、db.ts（Dexie schema 与 CRUD）
   lib/         date / photo / query / stats / exporter / backup / ai / constants
-  components/  ui.tsx、EntryEditor、ExportDialog、PhotoViewer、profile/* 各面板
+               cloudConfig.ts（云配置）、cloud.ts（客户端单例）、cloudAuth.ts（邮箱登录）、
+               cloudBackup.ts（云端备份与恢复）
+  components/  ui.tsx、EntryEditor、ExportDialog、PhotoViewer、CloudPanel、profile/* 各面板
   pages/       Today / Timeline / Album / Review / Profile / Settings
-  state/       app.tsx（人物与设置上下文）
-server/proxy.mjs          AI 服务端代理（零依赖）
-scripts/gen-icons.mjs     PWA 图标生成（零依赖，构建前自动执行）
-verify/verify-e2e.mjs     端到端验证脚本（Chrome CDP，零依赖）
+  state/       app.tsx（人物、设置与登录态上下文）
+server/proxy.mjs            AI 服务端代理（零依赖）
+scripts/gen-icons.mjs       PWA 图标生成（零依赖，构建前自动执行）
+verify/verify-e2e.mjs       本地/线上功能端到端验证（Chrome CDP，零依赖）
+verify/verify-cloud.mjs     云服务连通性与模型调用验证（需在已发布域名下运行）
 ```
 
 > PWA 图标由脚本生成，不入库。克隆后直接 `npm run build` 会自动生成；也可单独执行 `npm run icons`。
@@ -165,6 +207,18 @@ HL_BASE=http://127.0.0.1:4290 npm run verify
 
 # 线上版本
 HL_BASE=https://heartlog-diary.app.workbuddy.host npm run verify
+```
+
+云服务另有一套连通性验证（**必须在已发布的 HTTPS 域名下跑**，因为服务端按 Origin 精确匹配，localhost 会被拒）：
+
+```bash
+npm run verify:cloud
+```
+
+它会注入官方 SDK 并检查：域名与凭证链可用、模型列表可达、**真实发起一次流式模型调用并校验返回内容**、未登录时数据库被 RLS 正确拒绝（返回 0 行而非鉴权失败）、未登录访问对象存储被拒绝且给出明确错误。
+
+> 需要真实邮箱收码的部分（邮箱登录、云端备份读写）不在这套自动验证里 —— 那一步需要在界面上用你自己的邮箱完成。
+
 ```
 
 覆盖 62 项断言，逐条对应验收标准：

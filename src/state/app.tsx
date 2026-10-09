@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import type { CloudUser } from '@tencent-ai/workbuddy-cloud-sdk'
 import {
   DEFAULT_AI,
   DEFAULT_PREFS,
@@ -11,6 +12,8 @@ import {
   setMeta,
 } from '../db/db'
 import type { AIConfig, AppPrefs, Person } from '../db/types'
+import { cloud } from '../lib/cloud'
+import { fetchCloudUser } from '../lib/cloudAuth'
 
 interface AppState {
   person?: Person
@@ -21,6 +24,11 @@ interface AppState {
   prefs: AppPrefs
   saveAIConfig: (patch: Partial<AIConfig>) => Promise<void>
   savePrefs: (patch: Partial<AppPrefs>) => Promise<void>
+  /** 云服务当前登录用户；null 表示未登录（未登录时本地功能不受影响） */
+  cloudUser: CloudUser | null
+  /** 登录态是否已完成首次检查 */
+  cloudChecked: boolean
+  refreshCloudUser: () => Promise<void>
 }
 
 const Ctx = createContext<AppState | undefined>(undefined)
@@ -30,6 +38,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [aiConfig, setAIConfigState] = useState<AIConfig>(DEFAULT_AI)
   const [prefs, setPrefsState] = useState<AppPrefs>(DEFAULT_PREFS)
+  const [cloudUser, setCloudUser] = useState<CloudUser | null>(null)
+  const [cloudChecked, setCloudChecked] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -47,6 +57,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       alive = false
     }
   }, [])
+
+  const refreshCloudUser = useCallback(async () => {
+    try {
+      const u = await fetchCloudUser()
+      setCloudUser(u)
+    } catch {
+      // 网络不可达等情况：按未登录处理，本地功能照常
+      setCloudUser(null)
+    } finally {
+      setCloudChecked(true)
+    }
+  }, [])
+
+  // 首次读取登录态，并订阅登录态变化
+  useEffect(() => {
+    void refreshCloudUser()
+    const unsubscribe = cloud.auth.onAuthStateChange(() => {
+      void refreshCloudUser()
+    })
+    return () => {
+      try {
+        unsubscribe()
+      } catch {
+        // 忽略取消订阅失败
+      }
+    }
+  }, [refreshCloudUser])
 
   // 人物档案在别处被修改时保持同步
   const livePerson = useLiveQuery(async () => {
@@ -89,8 +126,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   )
 
   const value = useMemo<AppState>(
-    () => ({ person, loading, refreshPerson, updatePerson, aiConfig, prefs, saveAIConfig, savePrefs }),
-    [person, loading, refreshPerson, updatePerson, aiConfig, prefs, saveAIConfig, savePrefs],
+    () => ({
+      person,
+      loading,
+      refreshPerson,
+      updatePerson,
+      aiConfig,
+      prefs,
+      saveAIConfig,
+      savePrefs,
+      cloudUser,
+      cloudChecked,
+      refreshCloudUser,
+    }),
+    [
+      person,
+      loading,
+      refreshPerson,
+      updatePerson,
+      aiConfig,
+      prefs,
+      saveAIConfig,
+      savePrefs,
+      cloudUser,
+      cloudChecked,
+      refreshCloudUser,
+    ],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
