@@ -5,16 +5,17 @@ import { db, insightRepo, nowISO } from '../../db/db'
 import type { EvidenceType, PortraitInsight } from '../../db/types'
 import { EVIDENCE_TYPES, PORTRAIT_DIMENSIONS, evidenceMeta } from '../../lib/constants'
 import { fmtDate } from '../../lib/date'
-import { aiReady, aiUpdatePortrait, type PortraitDraft } from '../../lib/ai'
+import { aiUpdatePortrait, type PortraitDraft } from '../../lib/ai'
 import EvidencePicker from '../EvidencePicker'
 import { Chips, Empty, Field, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../ui'
-import { useApp } from '../../state/app'
+import { useApp, useAIReady } from '../../state/app'
 import { loadAllData } from '../../lib/exporter'
 
 export default function PortraitPanel({ personId }: { personId: string }) {
   const toast = useToast()
   const confirm = useConfirm()
   const { aiConfig } = useApp()
+  const aiOk = useAIReady()
   const [editing, setEditing] = useState<PortraitInsight | null>(null)
   const [open, setOpen] = useState(false)
   const [stateFilter, setStateFilter] = useState<'all' | 'pending' | 'confirmed' | 'rejected'>('all')
@@ -130,13 +131,13 @@ export default function PortraitPanel({ personId }: { personId: string }) {
           <div className="flex-1 min-w-0">
             <div className="text-[14.5px] font-medium text-ink-900">从记录里更新画像</div>
             <p className="text-[12.5px] text-ink-500 mt-1 leading-relaxed">
-              {aiReady(aiConfig)
+              {aiOk
                 ? 'AI 只负责「提取」，结论一律先进入「待确认」，你确认后才算数。每条都会标注依据强度和引用记录。'
                 : '需要先在「设置 → AI 增强」里配置模型。未配置时，你仍然可以手动添加和编辑画像。'}
             </p>
             <button
               className="btn-primary mt-3 !py-2 !px-3.5 text-[14px]"
-              disabled={!aiReady(aiConfig)}
+              disabled={!aiOk}
               onClick={() => {
                 setDrafts([])
                 setAiErr('')

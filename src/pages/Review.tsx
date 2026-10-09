@@ -16,11 +16,11 @@ import { ENTRY_TYPES } from '../lib/constants'
 import { fmtDate, fmtDateTime, parseAny, toDateStr } from '../lib/date'
 import { buildBaseSummary } from '../lib/stats'
 import { searchLocal, type SearchHit } from '../lib/query'
-import { aiAdvice, aiDisabledHint, aiNaturalQuery, aiPeriodSummary, aiReady, type AITaskOptions } from '../lib/ai'
+import { aiAdvice, aiDisabledHint, aiNaturalQuery, aiPeriodSummary, type AITaskOptions } from '../lib/ai'
 import { loadAllData, rangePresets, type AllData } from '../lib/exporter'
 import ExportDialog from '../components/ExportDialog'
 import { Empty, Field, Markdown, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../components/ui'
-import { useApp } from '../state/app'
+import { useApp, useAIReady } from '../state/app'
 
 type RangeKey = 'week' | 'lastWeek' | 'month' | 'lastMonth' | 'year'
 
@@ -34,6 +34,7 @@ const RANGE_LABELS: Record<RangeKey, string> = {
 
 export default function Review() {
   const { person, aiConfig } = useApp()
+  const aiOk = useAIReady()
   const toast = useToast()
   const confirm = useConfirm()
   const presets = useMemo(() => rangePresets(), [])
@@ -171,17 +172,17 @@ export default function Review() {
           </>
         }
       >
-        {!aiReady(aiConfig) && (
-          <p className="text-[12.5px] text-ink-500 mb-3 leading-relaxed">{aiDisabledHint()}</p>
+        {!aiOk && (
+          <p className="text-[12.5px] text-ink-500 mb-3 leading-relaxed">{aiDisabledHint(aiConfig)}</p>
         )}
         <div className="grid grid-cols-1 gap-2">
-          <button className="btn-ghost justify-start" disabled={!aiReady(aiConfig)} onClick={() => setAiOpen(true)}>
+          <button className="btn-ghost justify-start" disabled={!aiOk} onClick={() => setAiOpen(true)}>
             <Sparkles size={16} /> 生成 {RANGE_LABELS[rangeKey]}总结
           </button>
-          <button className="btn-ghost justify-start" disabled={!aiReady(aiConfig)} onClick={() => setAdviceOpen(true)}>
+          <button className="btn-ghost justify-start" disabled={!aiOk} onClick={() => setAdviceOpen(true)}>
             <Heart size={16} /> 相处建议（3-5 条，附依据）
           </button>
-          <button className="btn-ghost justify-start" disabled={!aiReady(aiConfig)} onClick={() => setQueryOpen(true)}>
+          <button className="btn-ghost justify-start" disabled={!aiOk} onClick={() => setQueryOpen(true)}>
             <Search size={16} /> 用一句话查记录
           </button>
         </div>
@@ -505,6 +506,7 @@ function AIQueryModal({
   onSaved: () => void
 }) {
   const { aiConfig } = useApp()
+  const aiOk = useAIReady()
   const toast = useToast()
   const [q, setQ] = useState('')
   const [opts, setOpts] = useState<AITaskOptions>({ includeHealth: false, includePrivate: true })
@@ -598,7 +600,7 @@ function AIQueryModal({
           <button className="btn-ghost flex-1" onClick={runLocal} disabled={!q.trim()}>
             <Search size={15} /> 本地检索
           </button>
-          <button className="btn-primary flex-1" onClick={runAI} disabled={!q.trim() || busy || !aiReady(aiConfig)}>
+          <button className="btn-primary flex-1" onClick={runAI} disabled={!q.trim() || busy || !aiOk}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} AI 回答
           </button>
         </div>

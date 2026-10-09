@@ -11,9 +11,9 @@
  * 环境变量：HL_BASE（默认取 cloudConfig 里的 endpoint）、HL_CHROME
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname, resolve } from 'node:path'
+import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -55,6 +55,80 @@ function record(name, ok, detail = '') {
   results.push({ name, ok, detail })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  —— ${detail}` : ''}`)
 }
+
+/* ------------------------------------------------------------------ */
+/* 静态不变量审计                                                      */
+/* 这几条都是实际踩过的坑，靠人眼守不住，所以固化成检查项。              */
+/* ------------------------------------------------------------------ */
+
+function walk(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name)
+    const st = statSync(p)
+    if (st.isDirectory()) walk(p, out)
+    else out.push(p)
+  }
+  return out
+}
+
+function auditSource() {
+  const srcDir = resolve(__dirname, '../src')
+  const files = walk(srcDir)
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => ({ path: relative(srcDir, f).replace(/\\/g, '/'), text: readFileSync(f, 'utf-8') }))
+
+  // 1) 组件不得直接调 aiReady(aiConfig)：那样会漏掉登录态，
+  //    把已配置好的「云服务」AI 误判成未启用（真实踩过的回归）。
+  const bare = []
+  for (const f of files) {
+    f.text.split('\n').forEach((line, i) => {
+      if (!/aiReady\(aiConfig\)/.test(line)) return
+      const trimmed = line.trim()
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return
+      bare.push(`${f.path}:${i + 1}`)
+    })
+  }
+  record('没有组件裸调 aiReady(aiConfig)（必须走 useAIReady 带上登录态）', bare.length === 0, bare.join(', '))
+
+  // 2) 每个客户端初始化都必须带 endpoint + publishableKey（网页端还要 oauthRelayBaseUrl）
+  const missing = []
+  let initCount = 0
+  for (const f of files) {
+    const re = /createWorkBuddyCloud\s*(?:<[^>]*>)?\s*\(/g
+    let m
+    while ((m = re.exec(f.text))) {
+      initCount++
+      const seg = f.text.slice(m.index, m.index + 600)
+      for (const key of ['endpoint', 'publishableKey', 'oauthRelayBaseUrl']) {
+        if (!seg.includes(`${key}:`)) missing.push(`${f.path} 缺 ${key}`)
+      }
+    }
+  }
+  record(
+    `客户端初始化调用点全部传齐 publicConfig（共 ${initCount} 处）`,
+    initCount > 0 && missing.length === 0,
+    missing.join(', '),
+  )
+
+  // 3) 发布域名只能出现在 cloudConfig.ts，别处不得写死
+  const endpointStray = files
+    .filter((f) => !f.path.endsWith('lib/cloudConfig.ts'))
+    .filter((f) => /https:\/\/[a-z0-9.-]*workbuddy\.(host|link|cn)/i.test(f.text))
+    .map((f) => f.path)
+  record('endpoint 字面量只出现在 cloudConfig.ts', endpointStray.length === 0, endpointStray.join(', '))
+
+  // 4) 不得手写 fetch 打 /.cloud/**
+  const handWritten = files.filter((f) => /fetch\([^)]*\.cloud\//.test(f.text)).map((f) => f.path)
+  record('没有手写 fetch 请求 /.cloud/**（必须走 SDK）', handWritten.length === 0, handWritten.join(', '))
+
+  // 5) 不得把 Authorization 头手写给云数据面
+  const manualAuth = files
+    .filter((f) => /Authorization/.test(f.text) && /\.cloud\//.test(f.text))
+    .map((f) => f.path)
+  record('没有向云数据面手工传 Authorization', manualAuth.length === 0, manualAuth.join(', '))
+}
+
+auditSource()
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'hl-cloud-'))
 const chrome = spawn(detectChrome(), [
@@ -267,7 +341,48 @@ try {
   `)
   record('未登录时会话为空（auth 接口可达）', session?.hasData === false, `error=${session?.error || 'null'}`)
 
-  /* 5. 页面本身在本轮没有未捕获异常 */
+  /* 6. 云端 AI 模式下的界面表现
+     真实踩过的回归：组件裸调 aiReady(aiConfig) 会漏掉登录态，
+     把已切到「云服务」的 AI 显示成「未配置或未启用」。 */
+  const seeded = await evaluate(`
+    (async () => {
+      return await new Promise((resolve) => {
+        const r = indexedDB.open('heartlog')
+        r.onsuccess = () => {
+          const db = r.result
+          try {
+            const tx = db.transaction('meta', 'readwrite')
+            tx.objectStore('meta').put({
+              key: 'aiConfig',
+              value: {
+                enabled: true, provider: 'cloud',
+                baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat',
+                cloudModel: '', viaProxy: false, proxyUrl: '', temperature: 0.7,
+              },
+            })
+            tx.oncomplete = () => { db.close(); resolve(true) }
+            tx.onerror = () => { db.close(); resolve(false) }
+          } catch (e) { db.close(); resolve(false) }
+        }
+        r.onerror = () => resolve(false)
+      })
+    })()
+  `)
+  record('（准备）已把 AI 切到「云服务」模式并启用', seeded === true, `seeded=${seeded}`)
+
+  // 带 query 强制整页重载，确保 AppProvider 重新读一次 meta
+  await send('Page.navigate', { url: `${BASE}/?verify=${Date.now()}#/review` })
+  await sleep(6000)
+  const reviewText = String(await evaluate('document.body.innerText'))
+  const saysNotConfigured = /AI 功能未配置或未启用/.test(reviewText)
+  const saysNeedLogin = /还没有登录云服务账号/.test(reviewText)
+  record(
+    '云服务模式下不再误报「未配置」，而是提示去登录',
+    saysNeedLogin && !saysNotConfigured,
+    saysNeedLogin ? '已显示「去登录」提示' : `未配置提示=${saysNotConfigured} / 登录提示=${saysNeedLogin}`,
+  )
+
+  /* 7. 页面本身在本轮没有未捕获异常 */
   record('验证期间页面无未捕获 JS 异常', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '))
 
   const passed = results.filter((r) => r.ok).length

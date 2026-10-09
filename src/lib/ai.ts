@@ -626,6 +626,9 @@ ${question ? `关注点：${question}` : ''}
 /* 建议提示（无 AI 时提示用户可开启）                                    */
 /* ------------------------------------------------------------------ */
 
-export function aiDisabledHint(): string {
+export function aiDisabledHint(config?: AIConfig): string {
+  if (config?.enabled && config.provider === 'cloud') {
+    return 'AI 已设为「云服务（免密钥）」，但当前还没有登录云服务账号。到「设置 → 云服务」用邮箱登录后即可使用；本地记录、检索、统计与导出不受影响。'
+  }
   return 'AI 功能未配置或未启用。所有记录、检索、统计与导出功能不受影响，可在「设置 → AI 增强」中开启。'
 }

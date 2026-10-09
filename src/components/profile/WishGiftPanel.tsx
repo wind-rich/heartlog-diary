@@ -6,10 +6,10 @@ import type { Gift, Wish, WishStatus } from '../../db/types'
 import { WISH_STATUS } from '../../lib/constants'
 import { fmtDate, toDateStr } from '../../lib/date'
 import { addPhotoFiles } from '../../lib/photo'
-import { aiGiftSuggestions, aiReady } from '../../lib/ai'
+import { aiGiftSuggestions } from '../../lib/ai'
 import { loadAllData } from '../../lib/exporter'
 import { Chips, Empty, Field, Markdown, Modal, PhotoImg, Segmented, Switch, Tag, useConfirm, useToast } from '../ui'
-import { useApp } from '../../state/app'
+import { useApp, useAIReady } from '../../state/app'
 
 /* ------------------------------------------------------------------ */
 /* 愿望                                                                */
@@ -143,6 +143,7 @@ export function WishPanel({ personId }: { personId: string }) {
 
 function GiftAdvisor({ personId, wishes }: { personId: string; wishes: Wish[] }) {
   const { aiConfig } = useApp()
+  const aiOk = useAIReady()
   const toast = useToast()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -186,7 +187,7 @@ function GiftAdvisor({ personId, wishes }: { personId: string; wishes: Wish[] })
         className="btn-ghost w-full"
         onClick={() => {
           setOpen(true)
-          if (!aiReady(aiConfig)) toast('请先在设置里配置 AI', 'info')
+          if (!aiOk) toast('请先在设置里配置 AI', 'info')
         }}
       >
         <Sparkles size={15} /> 让 AI 结合愿望和送礼历史给点建议
@@ -235,11 +236,11 @@ function GiftAdvisor({ personId, wishes }: { personId: string; wishes: Wish[] })
               onChange={(v) => setBudget(v as string)}
             />
           </Field>
-          <button className="btn-primary w-full" onClick={run} disabled={busy || !aiReady(aiConfig)}>
+          <button className="btn-primary w-full" onClick={run} disabled={busy || !aiOk}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy ? '正在挑礼物…' : '开始'}
           </button>
-          {!aiReady(aiConfig) && <p className="text-[12.5px] text-ink-300">AI 未配置，此功能暂不可用（其余功能不受影响）。</p>}
+          {!aiOk && <p className="text-[12.5px] text-ink-300">AI 未配置，此功能暂不可用（其余功能不受影响）。</p>}
           {err && <div className="rounded-xl bg-[#FDECEA] border border-[#F5C9C3] p-3 text-[13px] text-[#9B3B2E] whitespace-pre-line">{err}</div>}
           {result && (
             <div className="card card-pad">

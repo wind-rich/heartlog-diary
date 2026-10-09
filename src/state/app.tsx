@@ -12,6 +12,7 @@ import {
   setMeta,
 } from '../db/db'
 import type { AIConfig, AppPrefs, Person } from '../db/types'
+import { aiReady } from '../lib/ai'
 import { cloud } from '../lib/cloud'
 import { fetchCloudUser } from '../lib/cloudAuth'
 
@@ -161,4 +162,16 @@ export function useApp(): AppState {
   const v = useContext(Ctx)
   if (!v) throw new Error('useApp 必须在 AppProvider 内使用')
   return v
+}
+
+/**
+ * AI 是否真的可用。
+ *
+ * 判断 AI 可用性必须同时看「配置」和「登录态」——云服务模式靠登录态鉴权、
+ * 不需要用户自备 Key。**不要在组件里直接调 `aiReady(aiConfig)`**，
+ * 那样会漏掉登录态、把已配置好的云服务 AI 误判成「未启用」。
+ */
+export function useAIReady(): boolean {
+  const { aiConfig, cloudUser } = useApp()
+  return aiReady(aiConfig, Boolean(cloudUser))
 }

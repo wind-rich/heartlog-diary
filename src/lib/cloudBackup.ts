@@ -90,6 +90,30 @@ function payloadPath(uid: string, backupKey: string): string {
   return cloud.storage.userPath(uid, `${CLOUD_ROOT}/backups/${backupKey}/backup.json`)
 }
 
+/** 后端在对象已存在时返回的错误（各实现文案不一，统一按关键字识别） */
+function isAlreadyExists(message: string | undefined): boolean {
+  return /already\s*exists|resource\s*exist|文件已存在/i.test(message ?? '')
+}
+
+/**
+ * 上传一个「同 key 内容不会变」的对象。
+ *
+ * 不能用 upsert 覆盖来保证幂等 —— 后端不认 `x-upsert` 时，已存在的对象会直接报错，
+ * 那样一次「重试备份」就会整个失败。这里把「已存在」当成成功：照片按 id 不可变、
+ * 备份载荷的 key 每次唯一，两种情况都不需要覆盖。
+ */
+async function putObject(path: string, body: Blob, contentType: string): Promise<void> {
+  const up = await cloud.storage.upload(path, body, { contentType, upsert: true })
+  if (!up.error) return
+  if (isAlreadyExists(up.error.message)) return
+  throw new Error(up.error.message || '上传失败')
+}
+
+async function objectExists(path: string): Promise<boolean> {
+  const res = await cloud.storage.exists(path)
+  return !res.error && res.data === true
+}
+
 /** 描述当前设备，仅用于备份列表展示 */
 export function deviceLabel(): string {
   const ua = navigator.userAgent
@@ -154,16 +178,24 @@ export async function createCloudBackup(opts: { label?: string; onProgress?: Pro
     const bin = photoBlobs.get(meta.id)!
     const full = photoPath(uid, meta.id, meta.mime)
     const thumb = photoPath(uid, meta.id, meta.mime, true)
+    const contentType = meta.mime || 'image/jpeg'
     const leafFull = `${meta.id}.${extOf(meta.mime)}`
     const leafThumb = `thumb_${meta.id}.${extOf(meta.mime)}`
 
-    if (existing.has(leafFull) && existing.has(leafThumb)) {
+    // 列表可用就以列表为准（省请求）；列表拿不到就逐个确认 ——
+    // 否则一旦列表不可用，每次备份都会把这几十 MB 全部重传一遍。
+    const already =
+      existing.ok && existing.names.size > 0
+        ? existing.names.has(leafFull) && existing.names.has(leafThumb)
+        : existing.ok
+          ? false
+          : (await objectExists(full)) && (await objectExists(thumb))
+
+    if (already) {
       reused++
     } else {
-      const up = await cloud.storage.upload(full, bin.blob, { contentType: meta.mime || 'image/jpeg', upsert: true })
-      if (up.error) throw new Error(up.error.message || '照片上传失败')
-      const upThumb = await cloud.storage.upload(thumb, bin.thumb, { contentType: meta.mime || 'image/jpeg', upsert: true })
-      if (upThumb.error) throw new Error(upThumb.error.message || '缩略图上传失败')
+      await putObject(full, bin.blob, contentType)
+      await putObject(thumb, bin.thumb, contentType)
       uploaded++
     }
     photoBytes += bin.blob.size + bin.thumb.size
@@ -177,11 +209,11 @@ export async function createCloudBackup(opts: { label?: string; onProgress?: Pro
   // 后者数的是 UTF-16 码元，中文内容会系统性地少报约 1/3
   const payloadBytes = new Blob([payloadText]).size
   report?.({ stage: 'upload', done: 0, total: 1 })
-  const upPayload = await cloud.storage.upload(payloadPath(uid, backupKey), new Blob([payloadText], { type: 'application/json' }), {
-    contentType: 'application/json',
-    upsert: true,
-  })
-  if (upPayload.error) throw new Error(upPayload.error.message || '备份数据上传失败')
+  await putObject(
+    payloadPath(uid, backupKey),
+    new Blob([payloadText], { type: 'application/json' }),
+    'application/json',
+  )
   report?.({ stage: 'upload', done: 1, total: 1 })
 
   const records =
@@ -215,21 +247,47 @@ export async function createCloudBackup(opts: { label?: string; onProgress?: Pro
   return { row, uploadedPhotos: uploaded, reusedPhotos: reused }
 }
 
-async function listRemotePhotoFiles(uid: string): Promise<Set<string>> {
+interface RemotePhotoIndex {
+  /** 已存在的照片文件名（含缩略图） */
+  names: Set<string>
+  /** 列表是否真的取到了。取不到时调用方要退化成逐个 exists 检查，不能当成「云端什么都没有」 */
+  ok: boolean
+}
+
+async function listRemotePhotoFiles(uid: string): Promise<RemotePhotoIndex> {
   const names = new Set<string>()
   const prefix = photosPrefix(uid)
   let cursor: string | undefined
-  for (let page = 0; page < 20; page++) {
-    const res = await cloud.storage.listPage({ prefix, limit: 100, cursor })
-    if (res.error) return names // 列不出来就当作「一张都没有」，靠 upsert 兜底，不阻断备份
-    for (const obj of res.data.objects ?? []) {
-      const leaf = (obj.name || '').split('/').filter(Boolean).pop()
-      if (leaf) names.add(leaf)
+  try {
+    for (let page = 0; page < 20; page++) {
+      // 不要把 cursor 显式传成 undefined —— 某些实现会把它当字符串发出去导致请求失败
+      const opts: { prefix: string; limit: number; cursor?: string } = { prefix, limit: 100 }
+      if (cursor) opts.cursor = cursor
+      const res = await cloud.storage.listPage(opts)
+      if (res.error) return { names, ok: false }
+
+      const objects = res.data.objects ?? []
+      let usable = 0
+      for (const obj of objects) {
+        // name 与 key 哪个是完整路径要看实现，两个都试
+        const raw = obj.name || obj.key || ''
+        const leaf = raw.split('/').filter(Boolean).pop()
+        if (leaf) {
+          names.add(leaf)
+          usable++
+        }
+      }
+      // 明明返回了对象却一个文件名都解析不出来 —— 说明字段结构不是我们假设的样子。
+      // 此时**必须**判定为「列表不可用」，否则会被当成「云端什么都没有」而全量重传。
+      if (objects.length > 0 && usable === 0) return { names, ok: false }
+
+      if (!res.data.hasNext || !res.data.nextCursor) break
+      cursor = res.data.nextCursor
     }
-    if (!res.data.hasNext || !res.data.nextCursor) break
-    cursor = res.data.nextCursor
+  } catch {
+    return { names, ok: false }
   }
-  return names
+  return { names, ok: true }
 }
 
 /* ------------------------------------------------------------------ */
