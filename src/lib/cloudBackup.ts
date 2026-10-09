@@ -173,6 +173,9 @@ export async function createCloudBackup(opts: { label?: string; onProgress?: Pro
   const backupKey = makeBackupKey()
   const payload: CloudPayload = { manifest, data }
   const payloadText = JSON.stringify(payload)
+  // 用真实字节数，不要用 String.length ——
+  // 后者数的是 UTF-16 码元，中文内容会系统性地少报约 1/3
+  const payloadBytes = new Blob([payloadText]).size
   report?.({ stage: 'upload', done: 0, total: 1 })
   const upPayload = await cloud.storage.upload(payloadPath(uid, backupKey), new Blob([payloadText], { type: 'application/json' }), {
     contentType: 'application/json',
@@ -199,7 +202,7 @@ export async function createCloudBackup(opts: { label?: string; onProgress?: Pro
       record_count: records,
       photo_count: data.photos.length,
       photo_ids: data.photos.map((p) => p.id),
-      size_bytes: photoBytes + payloadText.length,
+      size_bytes: photoBytes + payloadBytes,
       app_version: BACKUP_VERSION,
       device: deviceLabel(),
     })
