@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #fffcf8;
+  color: #3b332e;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* 手机端更舒适的滚动 */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-white border border-cream-200 shadow-card;
+  }
+  .card-pad {
+    @apply p-4;
+  }
+  .label {
+    @apply block text-[13px] font-medium text-ink-700 mb-1.5;
+  }
+  .input {
+    @apply w-full rounded-xl border border-cream-300 bg-cream-50 px-3 py-2.5 text-[15px] text-ink-900 placeholder:text-ink-300 outline-none transition focus:border-rose-soft focus:bg-white focus:ring-2 focus:ring-rose-soft/25;
+  }
+  .textarea {
+    @apply input resize-none leading-relaxed;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-[15px] font-medium transition active:scale-[0.97] disabled:opacity-45 disabled:active:scale-100;
+  }
+  .btn-primary {
+    @apply btn bg-rose-deep text-white shadow-sm hover:brightness-105;
+  }
+  .btn-ghost {
+    @apply btn bg-cream-100 text-ink-700 border border-cream-300 hover:bg-cream-200;
+  }
+  .btn-text {
+    @apply inline-flex items-center gap-1 text-[14px] text-rose-deep hover:opacity-80;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[13px] border transition;
+  }
+  .chip-off {
+    @apply chip border-cream-300 bg-white text-ink-500;
+  }
+  .chip-on {
+    @apply chip border-rose-soft bg-rose-soft/15 text-rose-deep font-medium;
+  }
+  .section-title {
+    @apply text-[13px] font-semibold text-ink-500 tracking-wide mb-2 px-1;
+  }
+  .divide-soft {
+    @apply divide-y divide-cream-200;
+  }
+}
+
+/* 打印预览容器 */
+.print-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* 应用内 Markdown 简易渲染 */
+.md h1 {
+  @apply text-xl font-semibold mt-4 mb-2;
+}
+.md h2 {
+  @apply text-[17px] font-semibold mt-4 mb-2 text-ink-900;
+}
+.md h3 {
+  @apply text-[15px] font-semibold mt-3 mb-1.5 text-ink-700;
+}
+.md p {
+  @apply my-2 text-[15px] leading-relaxed text-ink-700;
+}
+.md ul {
+  @apply my-2 pl-5 list-disc space-y-1 text-[15px] text-ink-700;
+}
+.md ol {
+  @apply my-2 pl-5 list-decimal space-y-1 text-[15px] text-ink-700;
+}
+.md blockquote {
+  @apply my-3 border-l-[3px] border-rose-soft bg-cream-100 px-3 py-2 text-[13px] text-ink-500 rounded-r-lg;
+}
+.md table {
+  @apply w-full my-3 text-[13px] border-collapse;
+}
+.md th {
+  @apply bg-cream-100 text-left px-2 py-1.5 border border-cream-200 font-medium;
+}
+.md td {
+  @apply px-2 py-1.5 border border-cream-200 align-top;
+}
+.md strong {
+  @apply font-semibold text-ink-900;
+}
+.md code {
+  @apply bg-cream-100 px-1.5 py-0.5 rounded text-[13px];
+}
+.md hr {
+  @apply my-4 border-cream-200;
+}

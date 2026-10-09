@@ -1,0 +1,39 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+*.local
+
+# 构建缓存
+.vite/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# PWA 图标：由 scripts/gen-icons.mjs 生成，构建前自动重新生成（npm run icons）
+public/icons/*.png
+
+# 端到端验证产物（截图 / 下载 / 临时 Chrome profile）
+verify/_artifacts/
+
+# 编辑器与系统
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# 环境变量（AI 密钥等，一律不入库）
+.env
+.env.*
+!.env.example
