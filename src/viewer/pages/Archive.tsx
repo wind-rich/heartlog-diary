@@ -73,7 +73,7 @@ export default function Archive() {
         <div className="min-w-0">
           <h1 className="text-[19px] font-semibold text-ink-900">{s.person.displayName || '他'}的档案</h1>
           <p className="mt-1 text-[11.5px] text-ink-500">
-            偏好、心愿、健康、画像与回顾都按分类保存；推断出来的内容会标出依据强度，不会写成已确认事实
+            偏好、心愿、健康、每日状态、画像与回顾都按分类保存；推断出来的内容会标出依据强度，不会写成已确认事实
           </p>
         </div>
         {edit.canEdit && tab !== 'wishes' && (
