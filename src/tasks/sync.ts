@@ -137,11 +137,73 @@ async function fetchTaskRows(): Promise<Row[]> {
 }
 
 /* ------------------------------------------------------------------ */
+/* 删除向上：墓碑上行                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把本机待办删除推送成云端的 `deleted: true` 行。
+ *
+ * **这是曾经缺失的一步，也是「删除后再同步又回来了」的根因。**
+ * 现象复现链路：
+ *   1. 删除任务 → 本机 tasks 行删掉，tombstones 记一条（还没上传）；
+ *   2. 点同步 → 先拉取，云端那一行还在且不是 deleted，本机却没有 →
+ *      走进 `!local` 分支，把它**重新写回本机**；
+ *   3. 再上行 → 本机又有这行了 → 推回云端。
+ * 结果是删除被自己拉回来，而且每点一次同步都重复一遍。
+ *
+ * 只补 `flushTombstones()` 不够：那个只是把内存队列落到本地表，
+ * 从来没有上行。必须显式把这些墓碑写成云端删除行。
+ */
+async function pushDeletions(): Promise<number> {
+  const all = await db.tombstones.toArray()
+  const wanted = new Set<string>(TASK_ENTITIES)
+  const todo = all.filter((t) => !t.pushedAt && wanted.has(t.entity))
+  if (!todo.length) return 0
+
+  const rows: UpsertRow[] = todo.map((t) => ({
+    entity: t.entity,
+    row_id: t.rowId,
+    updated_at: t.deletedAt,
+    deleted: true,
+    payload: {},
+  }))
+  const CHUNK = 60
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const { error } = await activeCloud.database
+      .from(SYNC_TABLE)
+      .upsert(rows.slice(i, i + CHUNK), { onConflict: 'owner_id,entity,row_id' })
+    if (error) throw new Error(`上传删除失败：${error.message}`)
+  }
+  const at = nowISO()
+  await db.tombstones.bulkPut(todo.map((t) => ({ ...t, pushedAt: at })))
+  return todo.length
+}
+
+/**
+ * 本机已删、但还没推上去的行（`entity:rowId` → 删除时间 ms）。
+ *
+ * 拉取时用它挡住「自己刚删掉的云端旧行」。
+ * 即使 `pushDeletions` 因为网络失败没成功，这一步也能保证
+ * 本次同步不会把删除内容重新拉回本机。
+ */
+async function localDeletions(): Promise<Map<string, number>> {
+  const all = await db.tombstones.toArray()
+  const wanted = new Set<string>(TASK_ENTITIES)
+  const map = new Map<string, number>()
+  for (const t of all) {
+    if (!wanted.has(t.entity)) continue
+    map.set(`${t.entity}:${t.rowId}`, Date.parse(t.deletedAt) || Date.now())
+  }
+  return map
+}
+
+/* ------------------------------------------------------------------ */
 /* 下行                                                                */
 /* ------------------------------------------------------------------ */
 
 async function pull(uid: string): Promise<{ pulled: number; rejected: number; deleted: number }> {
   const rows = await fetchTaskRows()
+  const tombstones = await localDeletions()
   let pulled = 0
   let rejected = 0
   let deleted = 0
@@ -150,6 +212,7 @@ async function pull(uid: string): Promise<{ pulled: number; rejected: number; de
     const table = tableOf(row.entity)
     if (!table) continue
     const local = (await table.get(row.row_id)) as Record<string, unknown> | undefined
+    const key = `${row.entity}:${row.row_id}`
 
     if (row.deleted) {
       // 远端删除是最终行为：本机还留着就删。用抑制器避免记成一条新墓碑再推回去。
@@ -157,6 +220,18 @@ async function pull(uid: string): Promise<{ pulled: number; rejected: number; de
         await withDeletionsSuppressed(() => table.delete(row.row_id))
         deleted++
       }
+      continue
+    }
+
+    /**
+     * 本机已删、云端还没收到删除 → 不要拉回来。
+     *
+     * 这是「删除后同步又回来」的第二道防线：即使墓碑上行失败
+     * （离线、网关拒绝），只要本机墓碑还在，拉取就不会复活它，
+     * 下次同步会继续尝试上传。
+     */
+    if (tombstones.has(key)) {
+      rejected++
       continue
     }
 
@@ -241,8 +316,11 @@ export async function pushTasksToCloud(): Promise<TaskSyncResult> {
   try {
     const uid = await requireUid()
     await flushTombstones()
+    // 顺序：先推删除，再推业务行。反过来的话，一条「本机已删但云端还在」的行
+    // 可能刚被 push() 跳过、删除又还没生效，中间态没有意义。
+    const deleted = await pushDeletions()
     const res = await push(uid)
-    return { pushed: res.pushed, pulled: 0, rejected: 0, deleted: 0, lastSyncedAt: now }
+    return { pushed: res.pushed, pulled: 0, rejected: 0, deleted, lastSyncedAt: now }
   } catch (err) {
     return { pushed: 0, pulled: 0, rejected: 0, deleted: 0, lastSyncedAt: now, error: (err as Error).message }
   }
@@ -253,8 +331,11 @@ export async function pullTasksFromCloud(): Promise<TaskSyncResult> {
   const now = nowISO()
   try {
     const uid = await requireUid()
+    await flushTombstones()
+    // 先上行删除再拉取：否则刚删的东西会在本次拉取里被「云端还有」复活一次
+    const deleted = await pushDeletions()
     const res = await pull(uid)
-    return { pushed: 0, pulled: res.pulled, rejected: res.rejected, deleted: res.deleted, lastSyncedAt: now }
+    return { pushed: 0, pulled: res.pulled, rejected: res.rejected, deleted: deleted + res.deleted, lastSyncedAt: now }
   } catch (err) {
     return { pushed: 0, pulled: 0, rejected: 0, deleted: 0, lastSyncedAt: now, error: (err as Error).message }
   }
@@ -262,8 +343,13 @@ export async function pullTasksFromCloud(): Promise<TaskSyncResult> {
 
 /**
  * 双向：先拉后推。
- * 先拉的顺序与主同步一致 —— 先让本机拿到云端最新，再决定上行什么，
- * 否则刚拉下来的「云端更新」会被本机的旧版本当成待推内容。
+ *
+ * 注意删除的顺序是「拉 → 推删除 → 推业务行」：
+ * - 拉取阶段靠 `localDeletions()` 挡住本机刚删的行（第一道防线，不依赖网络）；
+ * - 然后把墓碑上行成云端删除（第二道，让另一台设备也能删掉）；
+ * - 最后推业务行（此时已删的行本机已不存在，不会被推回去）。
+ *
+ * 早先版本漏了「推删除」这一步，导致删除只活在本机，一次同步就被云端旧行复活。
  */
 export async function syncTasks(): Promise<TaskSyncResult> {
   const now = nowISO()
@@ -271,12 +357,13 @@ export async function syncTasks(): Promise<TaskSyncResult> {
     const uid = await requireUid()
     await flushTombstones()
     const pulled = await pull(uid)
+    const deleted = await pushDeletions()
     const pushed = await push(uid)
     return {
       pushed: pushed.pushed,
       pulled: pulled.pulled,
       rejected: pulled.rejected,
-      deleted: pulled.deleted,
+      deleted: pulled.deleted + deleted,
       lastSyncedAt: now,
     }
   } catch (err) {

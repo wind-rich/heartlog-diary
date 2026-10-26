@@ -60,6 +60,29 @@ if (/for \(const reg of regs\) \{\s*await reg\.unregister\(\)/.test(entrySrc)) {
 const keepsPushWorker = /scriptURL/.test(entrySrc) && /push|tasks-sw/i.test(entrySrc)
 if (!keepsPushWorker) problems.push('访客端自愈未按脚本名保留推送 worker（场景 J）')
 
+/* T8 删除方向：主同步必须先推删除再拉取，否则「删了又回来」。
+   曾经的顺序是「拉 → 推业务行 → 推删除」，拉取时云端那行还在、本机却没有，
+   被当成云端新增写回本机，紧接着又推回云端。 */
+const syncSrc = readFileSync(join(ROOT, 'src/lib/sync.ts'), 'utf8')
+const runSyncBody = syncSrc.slice(syncSrc.indexOf('export async function runSync'), syncSrc.indexOf('export async function pushLocalToCloud'))
+const orderTomb = runSyncBody.indexOf('await pushDeletions(opts)')
+const orderPull = runSyncBody.indexOf('await pullSince(')
+const orderPush = runSyncBody.indexOf('await pushAll(')
+if (!(orderTomb > 0 && orderTomb < orderPull && orderPull < orderPush)) {
+  problems.push('runSync 的顺序应为「推删除 → 拉取 → 推业务行」，否则删除会被云端旧行复活')
+}
+if (!/localTombs/.test(syncSrc)) {
+  problems.push('同步拉取缺少本机墓碑兜底（墓碑上传失败时会把已删内容拉回来）')
+}
+
+const taskSyncSrc = readFileSync(join(ROOT, 'src/tasks/sync.ts'), 'utf8')
+if (!/async function pushDeletions/.test(taskSyncSrc)) {
+  problems.push('待办同步缺少 pushDeletions：删除只留本机，一次同步就会被云端旧行复活')
+}
+if (!/localDeletions/.test(taskSyncSrc)) {
+  problems.push('待办同步缺少 localDeletions 兜底')
+}
+
 /* T8 隐私隔离：私有待办不得进入公开快照构建脚本的白名单 */
 const snapshotScript = readFileSync(join(ROOT, 'scripts/build-public-snapshot.mjs'), 'utf8')
 if (/\btasks\b/.test(snapshotScript) || /taskOccurrences/.test(snapshotScript)) {

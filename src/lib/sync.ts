@@ -551,6 +551,23 @@ async function pullSince(
 
   const incremental = await fetchPaged()
 
+  /**
+   * 本机已删、云端还没收到删除的行。
+   *
+   * 这是「删除后点同步又回来了」的第二道防线。
+   * 为什么必须有：`runSync` 的顺序是「拉 → 推业务行 → 推删除」，
+   * 拉取时墓碑还没上行成云端删除，云端那一行依然存在且 `deleted=false`；
+   * 本机已经没有这一行，于是走进 `!local` 分支被**原样写回本机**，
+   * 紧接着上行又把它推回云端 —— 删除被自己复活，而且每点一次同步重复一遍。
+   *
+   * 只看本机墓碑就够，不依赖墓碑是否已推送：没推成功更要拦住，
+   * 否则离线期间点一次同步就前功尽弃。
+   */
+  const localTombs = new Set<string>()
+  for (const t of await db.tombstones.toArray()) {
+    localTombs.add(`${t.entity}:${t.rowId}`)
+  }
+
   // 删除标记单独全量取过（不受时间过滤），与全量结果合并去重
   const seen = new Set<string>()
   const rows: SyncRow[] = []
@@ -578,6 +595,16 @@ async function pullSince(
       if (await applyRemoteDeletion(row.entity, row.row_id, remoteTime)) deleted++
       // 删除行不计入游标：它每轮都全量取，用它的时间推进游标没有意义，
       // 反而会把「还没读到的更新」挤到游标之前。
+      opts.onProgress?.({ phase: 'pull', done, total: rows.length })
+      continue
+    }
+
+    /**
+     * 本机删掉的、云端还没删的行：跳过，别拉回来。
+     * 见上面 localTombs 的说明。计入 keptLocal 让界面能看出「挡住了什么」。
+     */
+    if (localTombs.has(`${row.entity}:${row.row_id}`)) {
+      keptLocal++
       opts.onProgress?.({ phase: 'pull', done, total: rows.length })
       continue
     }
@@ -679,10 +706,19 @@ export async function runSync(opts: SyncOptions = {}): Promise<SyncResult> {
   await flushTombstones()
 
   const cursor = await healFutureCursor(await readCursor())
+  /**
+   * 顺序：先推删除 → 再拉取 → 再推业务行。
+   *
+   * 早先是「拉 → 推 → 推删除」，删除在最后才上行，于是拉取阶段云端那行还在、
+   * 本机却没有，被当成「云端新增」写回本机，紧接着又被推回云端 ——
+   * 用户看到的就是「删了，点同步又回来了」。
+   * 现在删除先上行，拉取时云端已是 deleted 行，直接走 applyRemoteDeletion 分支；
+   * `pullSince` 里另有本机墓碑兜底，防墓碑上传失败的那一次。
+   */
+  const tombstoned = await pushDeletions(opts)
   const pulled = await pullSince(cursor, opts, uid)
   // force=false：云端更新的行不覆盖。同步是「合并」，不是用本机快照盖掉云端。
   const pushed = await pushAll(opts, uid, undefined, false)
-  const tombstoned = await pushDeletions(opts)
 
   const doneAt = nowISO()
   // 拉不到新行时保持原游标。用本机 now 兜底会让「时钟稍慢的设备」写入的行

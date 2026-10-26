@@ -59,7 +59,16 @@ export interface Task {
   links: TaskLinks
   /** 完成时自愿留下的回忆文字；撤销完成不清空它 */
   completionNote?: string
-  /** 作者显式选择转为公开回忆（默认 false = 私有，D-008） */
+  /**
+   * 由这条待办派生出的**公开回忆**（entry id）。
+   *
+   * 与 `links.entryId` 的区别必须分清，否则会出现「转了公开又去改错记录」：
+   * - `links.entryId`：作者在编辑时**手动关联**已有的一条记录（输入）
+   * - `entryId`（本字段）：完成转公开时**系统生成**的那条回忆（输出，可回查/撤销）
+   * 两者可以同时存在，互不覆盖。
+   */
+  entryId?: string
+  /** 是否已转为公开回忆（D-008 要求显式选择，默认 false） */
   madePublic?: boolean
   /** 修订版本：每次业务字段变化 +1 */
   rev: number

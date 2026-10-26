@@ -90,6 +90,18 @@ export default function Home() {
 
   return (
     <div className="space-y-5">
+      {/*
+        ---------------- 为他记着（仅作者端） ----------------
+        放在宇宙主视觉**之前**：这是唯一有行动价值的模块（今天要做/该提醒了），
+        主视觉是氛围性的。手机上主视觉要占满一屏，放后面等于每次都要滑过它才看得到提醒。
+        访客端 editable=false，这里不渲染，也不会下载该 chunk。
+      */}
+      {editable && reload && (
+        <Suspense fallback={null}>
+          <TaskSummaryCard />
+        </Suspense>
+      )}
+
       {/* ---------------- 宇宙主视觉 ---------------- */}
       <section
         className={clsx(
@@ -184,13 +196,6 @@ export default function Home() {
           </div>
         </div>
       </section>
-
-      {/* ---------------- 为他记着（仅作者端） ---------------- */}
-      {editable && reload && (
-        <Suspense fallback={null}>
-          <TaskSummaryCard />
-        </Suspense>
-      )}
 
       {/* ---------------- 相伴天数 / 下一纪念日 ---------------- */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">

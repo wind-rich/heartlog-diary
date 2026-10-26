@@ -17,12 +17,14 @@ import {
   AlarmClock,
   Bell,
   BellOff,
+  BookHeart,
   CalendarClock,
   Check,
   CheckCircle2,
   ChevronDown,
   Circle,
   Clock,
+  EyeOff,
   Info,
   Loader2,
   Pencil,
@@ -52,6 +54,7 @@ import { bucketOf, dueLabel, nextTrigger, planProblem, reminderLabel, todayInZon
 import { DEFAULT_TIME_ZONE } from '../../tasks/types'
 import { probeNotifyCapability, requestNotifyPermission, showForegroundNotification } from '../../tasks/notify'
 import { pendingTaskChanges, syncTasks } from '../../tasks/sync'
+import { makeTaskPublic, revokeTaskPublic } from '../../tasks/makePublic'
 import { TaskEditor, useTaskDelete } from '../author/tasks/TaskEditor'
 
 const FILTERS: { key: TaskFilter; label: string }[] = [
@@ -184,9 +187,48 @@ export default function Tasks() {
     void reload?.()
   })
 
-  async function doComplete(task: Task, note: string) {
-    await completeTask(task.id, note)
-    toast(task.kind === 'remind' ? '已记录：我提醒过他了' : '已记录：这件事办好了')
+  /**
+   * 完成一条事项。
+   * `share` 为 true 时顺手生成公开回忆 —— 这是 D-008 要求的**显式选择**，
+   * 勾选框默认不勾，不勾就只留在自己这里。
+   */
+  async function doComplete(task: Task, note: string, share = false) {
+    const done = await completeTask(task.id, note)
+    if (share && done) {
+      try {
+        const res = await makeTaskPublic(done)
+        toast(res.created ? '已办完，并写成了一条回忆' : '已办完（这条回忆之前就写过了）')
+      } catch (err) {
+        // 完成本身成功了，只是转公开失败：如实说，不假装整件事都成功
+        toast(`已办完，但写成回忆失败：${(err as Error).message}`, 'err')
+      }
+    } else {
+      toast(task.kind === 'remind' ? '已记录：我提醒过他了' : '已记录：这件事办好了')
+    }
+    await load()
+    void reload?.()
+  }
+
+  /** 已完成但还没转公开的，补一次转换 */
+  async function doShare(task: Task) {
+    try {
+      const res = await makeTaskPublic(task)
+      toast(res.created ? '已写成一条公开回忆' : '这条回忆之前就写过了')
+      await load()
+      void reload?.()
+    } catch (err) {
+      toast(`转换失败：${(err as Error).message}`, 'err')
+    }
+  }
+
+  async function doRevokeShare(task: Task) {
+    const ok = await new Promise<boolean>((resolve) => {
+      // 用一次轻量确认，避免误点把公开状态关掉
+      resolve(window.confirm('取消公开只会断开关联，已经写好的那条回忆不会删除。继续？'))
+    })
+    if (!ok) return
+    await revokeTaskPublic(task)
+    toast('已取消公开状态，那条回忆仍保留在「故事」里')
     await load()
     void reload?.()
   }
@@ -378,6 +420,8 @@ export default function Tasks() {
               onCancel={() => void doCancel(r.task)}
               onRestore={() => void doRestore(r.task)}
               onDelete={() => void remove(r.task)}
+              onShare={() => void doShare(r.task)}
+              onRevokeShare={() => void doRevokeShare(r.task)}
             />
           ))}
         </ul>
@@ -405,7 +449,7 @@ export default function Tasks() {
         <CompleteInline
           task={completing}
           onClose={() => setCompleting(null)}
-          onDone={(note) => void doComplete(completing, note)}
+          onDone={(note, share) => void doComplete(completing, note, share)}
         />
       )}
     </div>
@@ -506,6 +550,8 @@ function TaskRow({
   onCancel,
   onRestore,
   onDelete,
+  onShare,
+  onRevokeShare,
 }: {
   row: Row
   todayStr: string
@@ -520,6 +566,8 @@ function TaskRow({
   onCancel: () => void
   onRestore: () => void
   onDelete: () => void
+  onShare: () => void
+  onRevokeShare: () => void
 }) {
   const { task, reminders, nextAt } = row
   const bucket = bucketOf(task, todayStr)
@@ -618,7 +666,21 @@ function TaskRow({
                 <SmallBtn onClick={onCancel} icon={<XCircle size={11} />} label="取消" />
               </>
             )}
-            {task.status === 'done' && <SmallBtn onClick={onReopen} icon={<RotateCcw size={11} />} label="撤销完成" />}
+            {task.status === 'done' && (
+              <>
+                <SmallBtn onClick={onReopen} icon={<RotateCcw size={11} />} label="撤销完成" />
+                {task.madePublic ? (
+                  <>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#EEF5EC] px-2 py-0.5 text-[11px] text-[#4F6B45]">
+                      <BookHeart size={11} /> 已写成回忆
+                    </span>
+                    <SmallBtn onClick={onRevokeShare} icon={<EyeOff size={11} />} label="取消公开" />
+                  </>
+                ) : (
+                  <SmallBtn onClick={onShare} icon={<BookHeart size={11} />} label="写成回忆" />
+                )}
+              </>
+            )}
             {task.status === 'cancelled' && <SmallBtn onClick={onRestore} icon={<CheckCircle2 size={11} />} label="恢复为待办" />}
             <button
               type="button"
@@ -672,8 +734,9 @@ function SmallBtn({ onClick, icon, label }: { onClick: () => void; icon: React.R
 /* 完成弹窗（内联，避免额外依赖）                                        */
 /* ------------------------------------------------------------------ */
 
-function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => void; onDone: (note: string) => void }) {
+function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => void; onDone: (note: string, share: boolean) => void }) {
   const [note, setNote] = useState(task.completionNote ?? '')
+  const [share, setShare] = useState(false)
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
       <div className="absolute inset-0 bg-[#4A3B31]/40 backdrop-blur-[2px]" onClick={onClose} />
@@ -693,6 +756,23 @@ function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => 
           onChange={(e) => setNote(e.target.value)}
           placeholder="留一句回忆（可留空，撤销完成也不会清掉）"
         />
+
+        {/* 转为公开回忆：默认不勾，必须作者主动选（D-008） */}
+        <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-xl border border-cream-200 bg-white px-3 py-2">
+          <input
+            type="checkbox"
+            checked={share}
+            onChange={(e) => setShare(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[#B4626B]"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[12.5px] text-ink-700">同时写成一条公开回忆</span>
+            <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-300">
+              会在「故事」里生成一条记录，发布后访客也能看到。不勾选就只有你自己看得到。
+            </span>
+          </span>
+        </label>
+
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" className="btn-ghost px-3 py-1.5 text-[13px]" onClick={onClose}>
             取消
@@ -701,7 +781,7 @@ function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => 
             type="button"
             className="btn-primary px-3 py-1.5 text-[13px]"
             onClick={() => {
-              onDone(note)
+              onDone(note, share)
               onClose()
             }}
           >

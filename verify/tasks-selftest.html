@@ -61,6 +61,8 @@
         __setTaskCloudForTest,
         __setTaskSessionForTest,
       } from '/src/tasks/sync.ts'
+      import { makeTaskPublic, revokeTaskPublic } from '/src/tasks/makePublic.ts'
+      import { buildLocalSnapshot } from '/src/viewer/data/local.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -453,6 +455,70 @@
         return t
       }
 
+
+      /* ================================================================ */
+      /* 12b) 回归：删除后再同步不得复活（真实用户报的 bug）                 */
+      /* ================================================================ */
+      async function testDeleteThenSync() {
+        __setTaskCloudForTest(mockCloud)
+        __setTaskSessionForTest({ user: { id: 'u_task_test' } })
+        remote.clear()
+        await db.tombstones.clear()
+        resetPending()
+
+        // 1) 建一条任务并同步上去
+        const t = await createTask({ personId: P, title: '删了不该回来', kind: 'prepare' })
+        await addReminder(t.id, { mode: 'before', offsetMinutes: 30 })
+        const r1 = await syncTasks()
+        check('前置：任务已同步到云端', Boolean(remote.get(`tasks:${t.id}`)) && !r1.error, `err=${r1.error ?? '-'}`)
+
+        // 2) 本机删除（走真实的级联删，会产生墓碑）
+        await deleteTaskCascade(t.id)
+        await sleep(60)
+        const tombAfterDelete = (await db.tombstones.toArray()).filter((x) => x.entity === 'tasks' && x.rowId === t.id)
+        check('删除后本机留下墓碑', tombAfterDelete.length === 1, `tombstones=${tombAfterDelete.length}`)
+
+        // 3) 点同步 —— 这里就是 bug 的现场
+        const r2 = await syncTasks()
+        const resurrected = await db.tasks.get(t.id)
+        check('删除后同步不会把任务拉回本机', !resurrected, resurrected ? `复活：${resurrected.title}` : '未复活')
+        const cloudAfter = remote.get(`tasks:${t.id}`)
+        check('删除已上行成云端 deleted 行', cloudAfter?.deleted === true, `deleted=${cloudAfter?.deleted} err=${r2.error ?? '-'}`)
+
+        // 4) 再点两次，确认是幂等的、不会反复复活
+        const r3 = await syncTasks()
+        const r4 = await syncTasks()
+        const stillGone = await db.tasks.get(t.id)
+        check('连续同步三次都不会复活', !stillGone, stillGone ? '复活' : '仍已删除')
+        check('重复同步不报错', !r2.error && !r3.error && !r4.error, `${r2.error ?? '-'}/${r3.error ?? '-'}/${r4.error ?? '-'}`)
+
+        // 5) 墓碑上传失败时，拉取仍不能被云端旧行复活（第二道防线）
+        remote.set(`tasks:tk_zombie`, {
+          entity: 'tasks', row_id: 'tk_zombie', updated_at: nowISO(), deleted: false,
+          payload: { id: 'tk_zombie', personId: P, title: '云端旧行', kind: 'prepare', status: 'open',
+            links: {}, timeZone: TZ, rev: 1, createdAt: nowISO(), updatedAt: nowISO() },
+        })
+        await db.tombstones.put({
+          id: 'tasks:tk_zombie', entity: 'tasks', rowId: 'tk_zombie',
+          deletedAt: nowISO(), // 注意：pushedAt 为空，模拟上传失败
+        })
+        const r5 = await pullTasksFromCloud()
+        const zombie = await db.tasks.get('tk_zombie')
+        check('墓碑未上传时拉取也不复活本机已删的行', !zombie, zombie ? '被复活' : '已挡住')
+        void r5
+
+        // 6) 另一台设备的视角：删除要真的传导过去（用干净的本机状态模拟）
+        await db.tasks.delete(t.id).catch(() => undefined)
+        await db.tombstones.clear()
+        const remoteDeleted = remote.get(`tasks:${t.id}`)
+        check('云端保留 deleted 标记供其它设备同步', remoteDeleted?.deleted === true, `deleted=${remoteDeleted?.deleted}`)
+
+        __setTaskCloudForTest(null)
+        __setTaskSessionForTest(undefined)
+        await db.tombstones.clear()
+        resetPending()
+      }
+
       /* ================================================================ */
       /* 13) 备份格式 v2 兼容                                              */
       /* ================================================================ */
@@ -554,6 +620,64 @@
         check('逾期计数与库一致', s.overdue === expectOverdue, `${s.overdue} vs ${expectOverdue}`)
       }
 
+
+      /* ================================================================ */
+      /* 16) 完成 → 转为公开回忆（D-008 / D-017）                           */
+      /* ================================================================ */
+      async function testMakePublic() {
+        const t = await createTask({ personId: P, title: '陪他去复查', kind: 'prepare', dueDate: '2026-10-20' })
+        await completeTask(t.id, '检查结果都正常，他很开心')
+        const done = await db.tasks.get(t.id)
+
+        // 未完成的不允许转
+        const t2 = await createTask({ personId: P, title: '还没做的事', kind: 'remind' })
+        let blocked = false
+        try { await makeTaskPublic(t2) } catch { blocked = true }
+        check('未完成的待办不能转为回忆', blocked, blocked ? '已拒绝' : '错误地允许了')
+
+        // 首次转换
+        const r1 = await makeTaskPublic(done)
+        check('转换后生成了一条回忆', r1.created === true, `entryId=${r1.entryId}`)
+        const entry = await db.entries.get(r1.entryId)
+        check('回忆标题取自待办标题', entry?.title === '陪他去复查', entry?.title ?? '缺失')
+        check('回忆正文保留了完成时写的那句话', (entry?.content ?? '').includes('检查结果都正常'), entry?.content ?? '')
+        check('回忆发生时间取完成时间', entry?.occurredAt === done.completedAt, `${entry?.occurredAt} vs ${done.completedAt}`)
+        check('回忆上留有待办来源标记（供幂等）', entry?.followUp === `task:${t.id}`, entry?.followUp ?? '')
+
+        const after = await db.tasks.get(t.id)
+        check('待办回写了 entryId 与 madePublic', after?.entryId === r1.entryId && after?.madePublic === true, `${after?.entryId}/${after?.madePublic}`)
+
+        // 幂等：再转两次都不得产生新回忆
+        const before = await db.entries.count()
+        const r2 = await makeTaskPublic(await db.tasks.get(t.id))
+        const r3 = await makeTaskPublic(await db.tasks.get(t.id))
+        const afterCount = await db.entries.count()
+        check('重复转换是幂等的，不产生第二条回忆', afterCount === before && !r2.created && !r3.created, `entries ${before} → ${afterCount}`)
+
+        // 只进公开白名单里的 entries，不进 tasks
+        const snap = await buildLocalSnapshot()
+        check('回忆出现在公开快照的 entries 里', snap.entries.some((e) => e.id === r1.entryId), `entries=${snap.entries.length}`)
+        check('待办本身不在公开快照里（D-008 默认私有）', !('tasks' in snap) && !JSON.stringify(snap).includes('"status":"open"'), 'snapshot 无 tasks')
+
+        // 撤销公开：只断关联，不删回忆
+        await revokeTaskPublic(await db.tasks.get(t.id))
+        const revoked = await db.tasks.get(t.id)
+        const stillThere = await db.entries.get(r1.entryId)
+        check('取消公开后 madePublic 变 false', revoked?.madePublic === false, String(revoked?.madePublic))
+        check('取消公开不删除已写好的回忆', Boolean(stillThere), stillThere ? '回忆仍在' : '回忆被删了')
+
+        // 撤销后重新转换仍然幂等（同一条回忆，不新增）
+        const r4 = await makeTaskPublic(revoked)
+        check('取消后重新转换复用同一条回忆', r4.created === false && r4.entryId === r1.entryId, `created=${r4.created}`)
+
+        // 正文里没有内容时兜底，不能生成空回忆
+        const t3 = await createTask({ personId: P, title: '一句话都没留下的待办', kind: 'prepare' })
+        await completeTask(t3.id)
+        const r5 = await makeTaskPublic(await db.tasks.get(t3.id))
+        const e5 = await db.entries.get(r5.entryId)
+        check('没有备注时正文有兜底文案而不是空串', Boolean(e5?.content && e5.content.trim().length > 0), e5?.content ?? '')
+      }
+
       async function main() {
         await wipeAllData()
         await db.tombstones.clear()
@@ -572,9 +696,11 @@
         await testSnooze()
         await testCascade()
         await testTaskSync()
+        await testDeleteThenSync()
         await testBuckets()
         await testSummary()
         await testBackupCompat()
+        await testMakePublic()
 
         const failed = checks.filter((c) => !c.pass)
         window.__taskselftest = { done: true, total: checks.length, failed: failed.length, checks }

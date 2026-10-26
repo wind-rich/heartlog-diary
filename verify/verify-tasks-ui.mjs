@@ -471,6 +471,102 @@ try {
   if (afterDel !== 0) problems.push(`删除后任务仍在库里（残留 ${afterDel} 条）`)
   notes.push(`删除后残留=${afterDel}`)
 
+
+  /* ---------------- 8b. 首页提醒模块（真正可操作，不只是计数） ---------------- */
+  // 前面的用例刚把提醒全部标为已读，这里先造一条新的到期提醒，否则首页本来就不该有提醒区
+  await cdp.send('Page.navigate', { url: `${BASE}/#/tasks` })
+  await sleep(1600)
+  await cdp.evaluate(`(async () => {
+    const mod = await import('/src/db/db.ts')
+    const store = await import('/src/tasks/store.ts')
+    const model = await import('/src/tasks/model.ts')
+    const at = Date.now() - 3 * 60 * 1000
+    const wall = model.msToWallClock(at, 'Asia/Shanghai')
+    const t = await store.createTask({ personId: 'p_ui_task', title: '首页该提醒的事', kind: 'remind' })
+    await store.addReminder(t.id, { mode: 'absolute', date: wall.date, time: wall.time })
+    return true
+  })()`)
+
+  await cdp.send('Page.navigate', { url: `${BASE}/#/` })
+  await sleep(3000)
+  // 铃铛面板可能还开着，先关掉再看首页
+  await cdp.evaluate(`(() => {
+    const close = [...document.querySelectorAll('button[aria-label="关闭"]')]
+    close.forEach((b) => b.click())
+    return close.length
+  })()`)
+  await sleep(600)
+  const homeText = await cdp.text()
+  if (!homeText.includes('为他记着')) problems.push('首页没有「为他记着」模块')
+  if (!homeText.includes('该提醒了')) problems.push(`首页没有显示「该提醒了」的到期提醒区（页面现有：${homeText.slice(0, 200)}）`)
+  if (!homeText.includes('首页该提醒的事')) problems.push('首页提醒区没有列出到期的那条事项')
+
+  // 首页直接完成一条到期事项
+  const homeDone = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('button[aria-label^="完成："]')
+    if (!btn) return null
+    const label = btn.getAttribute('aria-label')
+    btn.click()
+    return label
+  })()`)
+  if (!homeDone) problems.push('首页到期提醒里没有可点的完成按钮')
+  await sleep(1500)
+  const homeDoneCheck = await cdp.evaluate(`(async () => {
+    const mod = await import('/src/db/db.ts')
+    const t = (await mod.db.tasks.toArray()).find((x) => x.status === 'done')
+    const unread = (await mod.db.taskOccurrences.toArray()).filter((o) => o.firedAt && !o.readAt && !o.dismissedAt)
+    return { done: t ? t.title : null, unread: unread.length }
+  })()`)
+  if (!homeDoneCheck.done) problems.push('首页点完成后任务状态没有变 done')
+  notes.push(`首页：完成按钮=${homeDone ?? '无'}，完成后 done=${homeDoneCheck.done ?? '无'}，剩余未读=${homeDoneCheck.unread}`)
+  await cdp.shot('09-home-reminder.png')
+
+  /* ---------------- 8c. 写成回忆（转为公开） ---------------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/#/tasks?f=done` })
+  await sleep(1800)
+  const shareClicked = await cdp.evaluate(`(() => {
+    const li = [...document.querySelectorAll('li')].find((e) => e.innerText.includes('写成回忆'))
+    if (!li) return 'no-row'
+    const b = [...li.querySelectorAll('button')].find((x) => x.innerText.includes('写成回忆'))
+    if (!b) return 'no-btn'
+    b.click(); return 'ok'
+  })()`)
+  if (shareClicked !== 'ok') problems.push(`点「写成回忆」失败：${shareClicked}`)
+  await sleep(1600)
+  const shared = await cdp.evaluate(`(async () => {
+    const mod = await import('/src/db/db.ts')
+    const tasks = await mod.db.tasks.toArray()
+    const t = tasks.find((x) => x.madePublic)
+    const entries = await mod.db.entries.toArray()
+    const e = t && t.entryId ? entries.find((x) => x.id === t.entryId) : null
+    return { madePublic: Boolean(t), title: e ? e.title : null, entryCount: entries.length, entryId: t?.entryId ?? null }
+  })()`)
+  if (!shared.madePublic) problems.push('点「写成回忆」后 madePublic 没有置 true')
+  if (!shared.title) problems.push('没有生成对应的回忆记录')
+  notes.push(`写成回忆：madePublic=${shared.madePublic}，回忆标题=${shared.title ?? '无'}，entries=${shared.entryCount}`)
+
+  // 再点一次不得产生第二条
+  const beforeCount = shared.entryCount
+  const shareAgain = await cdp.evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find((x) => x.innerText.includes('取消公开'))
+    return b ? 'has-revoke' : 'no-revoke'
+  })()`)
+  const afterCount = await cdp.evaluate(`(async () => {
+    const mod = await import('/src/db/db.ts')
+    return (await mod.db.entries.toArray()).length
+  })()`)
+  if (afterCount !== beforeCount) problems.push('写成回忆后 entries 数量异常变化')
+  notes.push(`转换后界面按钮=${shareAgain}，entries 稳定=${afterCount === beforeCount}`)
+  await cdp.shot('10-share-entry.png')
+
+  // 回忆应出现在故事页（公开路径可达）
+  await cdp.send('Page.navigate', { url: `${BASE}/#/stories` })
+  await sleep(2200)
+  const storiesText = await cdp.text()
+  const inStories = shared.title ? storiesText.includes(shared.title) : false
+  if (!inStories) problems.push(`转为回忆后故事页看不到「${shared.title}」`)
+  notes.push(`故事页可见该回忆=${inStories}`)
+
   /* ---------------- 10. 访客端隔离 ---------------- */
   const visitorInfo = await cdp.evaluate(`(async () => {
     const res = await fetch('/viewer.html', { cache: 'no-store' })
