@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie'
+import { recordDeletion, setTombstoneSink, TOMBSTONE_ENTITIES, type Tombstone } from '../lib/tombstones'
 import type {
   AIConfig,
   AppPrefs,
@@ -27,6 +28,7 @@ export class HeartLogDB extends Dexie {
   insights!: Table<PortraitInsight, string>
   summaries!: Table<Summary, string>
   meta!: Table<MetaRow, string>
+  tombstones!: Table<Tombstone, string>
 
   constructor() {
     super('heartlog')
@@ -43,10 +45,32 @@ export class HeartLogDB extends Dexie {
       summaries: 'id, personId, kind, rangeStart, rangeEnd, createdAt',
       meta: 'key',
     })
+    // v2 只加一张表：删除同步用的墓碑。老库升级不丢数据（Dexie 按版本增量迁移）。
+    this.version(2).stores({
+      tombstones: 'id, entity, deletedAt, pushedAt',
+    })
   }
 }
 
 export const db = new HeartLogDB()
+
+/* ------------------------------------------------------------------ */
+/* 删除墓碑采集：挂在 Dexie 的 deleting 钩子上                          */
+/* 这样任何删除路径（含以后新增的）都会被记下来，不依赖调用点自觉。      */
+/* ------------------------------------------------------------------ */
+
+setTombstoneSink(async (items) => {
+  await db.tombstones.bulkPut(items)
+})
+
+for (const entity of TOMBSTONE_ENTITIES) {
+  const table = (db as unknown as Record<string, Table<unknown, string>>)[entity]
+  if (!table?.hook) continue
+  table.hook('deleting', (primKey) => {
+    if (primKey === undefined || primKey === null) return
+    recordDeletion(entity, String(primKey))
+  })
+}
 
 /* ------------------------------------------------------------------ */
 /* 通用工具                                                            */
@@ -93,6 +117,20 @@ export async function getMeta<T>(key: string, fallback: T): Promise<T> {
   const row = await db.meta.get(key)
   if (!row || row.value === undefined || row.value === null) return fallback
   return { ...(fallback as object), ...(row.value as object) } as T
+}
+
+/**
+ * 读取标量型的 meta（字符串 / 数字）。
+ *
+ * 注意：`getMeta` 是给对象型配置用的——它会用展开合并默认值，字符串走展开会变成一个
+ * 下标对象（`{0:'2',1:'0',...}`），再把这种东西传给 PostgREST 就会得到
+ * `invalid input syntax for type timestamp with time zone: "[object Object]"`。
+ * 字符串、数字一律用这个函数。
+ */
+export async function getMetaValue<T>(key: string, fallback: T): Promise<T> {
+  const row = await db.meta.get(key)
+  if (!row || row.value === undefined || row.value === null) return fallback
+  return row.value as T
 }
 
 export async function setMeta<T>(key: string, value: T): Promise<void> {
@@ -231,6 +269,8 @@ export const giftRepo = makeRepo(db.gifts, 'g_')
 export const wishRepo = makeRepo(db.wishes, 'w_')
 export const healthRepo = makeRepo(db.health, 'h_')
 export const insightRepo = makeRepo(db.insights, 'i_')
+/** 总结 / 回顾：档案页「历史回顾」用 */
+export const summaryRepo = makeRepo(db.summaries, 'sm_')
 
 /** 每日状态按 personId + date 唯一，使用 upsert */
 export async function upsertDailyStatus(

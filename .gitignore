@@ -4,6 +4,9 @@ node_modules/
 # 构建产物
 dist/
 dist-ssr/
+# 展示端公网发布产物（只含 viewer，不含作者端）
+dist-viewer/
+dist-publish/
 *.local
 
 # 构建缓存
@@ -37,3 +40,7 @@ logs/
 .env
 .env.*
 !.env.example
+
+# 临时调试脚本（一次性探针，不属于发布链路）
+verify/_probe-*.mjs
+verify/_repro-*.mjs

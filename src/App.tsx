@@ -1,104 +1,86 @@
-import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { BookHeart, CalendarDays, Images, ListTree, Settings as SettingsIcon, UserRound } from 'lucide-react'
-import clsx from 'clsx'
+import { useCallback, useEffect, useState } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppProvider, useApp } from './state/app'
 import { ConfirmProvider, ToastProvider } from './components/ui'
-import Today from './pages/Today'
-import Timeline from './pages/Timeline'
-import Album from './pages/Album'
-import Review from './pages/Review'
-import ProfilePage from './pages/Profile'
+import { StartGate } from './components/StartGate'
+import { SnapshotProvider } from './viewer/state/SnapshotContext'
+import { Shell } from './viewer/components/Shell'
+import { AuthorReloadContext } from './viewer/author/AuthorReload'
+import { buildLocalSnapshot, revokeLocalMedia } from './viewer/data/local'
+import type { PublishedSnapshot } from './viewer/types'
+import Home from './viewer/pages/Home'
+import Stories from './viewer/pages/Stories'
+import Album from './viewer/pages/Album'
+import Archive from './viewer/pages/Archive'
+import RecordDetail from './viewer/pages/RecordDetail'
 import SettingsPage from './pages/Settings'
 
-const NAV = [
-  { to: '/today', label: '今天', icon: CalendarDays },
-  { to: '/timeline', label: '时间线', icon: ListTree },
-  { to: '/album', label: '相册', icon: Images },
-  { to: '/review', label: '回顾', icon: BookHeart },
-  { to: '/profile', label: '档案', icon: UserRound },
-]
+/**
+ * 作者端：不再使用旧的「今天/时间线/回顾」界面，
+ * 直接套用访客端那套页面（宇宙首页 / 故事 / 相册 / 档案），
+ * 数据来自本机 Dexie，页面上额外出现编辑入口。
+ */
 
-function Shell() {
-  const { person, loading } = useApp()
-  const nav = useNavigate()
-  const loc = useLocation()
-  const hideNav = loc.pathname.startsWith('/settings')
-
-  if (loading) {
-    return (
-      <div className="min-h-full flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-ink-300">
-          <div className="text-3xl">♥</div>
-          <div className="text-[13px]">正在打开你的记录…</div>
-        </div>
-      </div>
-    )
-  }
-
+function Loading({ text }: { text: string }) {
   return (
-    <div className="min-h-full flex flex-col bg-cream-50">
-      <header className="sticky top-0 z-40 bg-cream-50/92 backdrop-blur-md border-b border-cream-200">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-2">
-          <button className="flex items-center gap-2 min-w-0" onClick={() => nav('/profile')}>
-            <span className="text-rose-deep text-lg leading-none">♥</span>
-            <span className="font-semibold text-ink-900 text-[16px] truncate">
-              {person?.nickname || person?.name || '心意簿'}
-            </span>
-          </button>
-          <div className="flex-1" />
-          <button
-            className="w-9 h-9 rounded-full flex items-center justify-center text-ink-500 hover:bg-cream-200"
-            onClick={() => nav('/settings')}
-            aria-label="设置"
-          >
-            <SettingsIcon size={19} />
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 pt-4 pb-[calc(84px+var(--safe-bottom))]">
-        <Routes>
-          <Route path="/" element={<Navigate to="/today" replace />} />
-          <Route path="/today" element={<Today />} />
-          <Route path="/timeline" element={<Timeline />} />
-          <Route path="/album" element={<Album />} />
-          <Route path="/review" element={<Review />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/today" replace />} />
-        </Routes>
-      </main>
-
-      {!hideNav && (
-        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-cream-50/95 backdrop-blur-md border-t border-cream-200">
-          <div
-            className="max-w-2xl mx-auto grid grid-cols-5"
-            style={{ paddingBottom: 'var(--safe-bottom)' }}
-          >
-            {NAV.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                className={({ isActive }) =>
-                  clsx(
-                    'flex flex-col items-center gap-0.5 py-2.5 transition',
-                    isActive ? 'text-rose-deep' : 'text-ink-300',
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <n.icon size={21} strokeWidth={isActive ? 2.2 : 1.8} />
-                    <span className="text-[11px]">{n.label}</span>
-                  </>
-                )}
-              </NavLink>
-            ))}
-          </div>
-        </nav>
-      )}
+    <div className="flex min-h-screen items-center justify-center bg-cream-50">
+      <div className="flex flex-col items-center gap-3 text-ink-300">
+        <div className="text-3xl">♥</div>
+        <div className="text-[13px]">{text}</div>
+      </div>
     </div>
   )
+}
+
+function AuthorViewer() {
+  const [snapshot, setSnapshot] = useState<PublishedSnapshot | null>(null)
+  const [failed, setFailed] = useState('')
+
+  const reload = useCallback(async () => {
+    try {
+      const snap = await buildLocalSnapshot()
+      if (!snap) {
+        setFailed('本机没有可用的人物档案')
+        return
+      }
+      setSnapshot(snap)
+    } catch (err) {
+      setFailed((err as Error).message)
+    }
+  }, [])
+
+  useEffect(() => {
+    void reload()
+    return () => revokeLocalMedia()
+  }, [reload])
+
+  if (failed) return <Loading text={`读取本机数据失败：${failed}`} />
+  if (!snapshot) return <Loading text="正在读取本机记录…" />
+
+  return (
+    <AuthorReloadContext.Provider value={reload}>
+      <SnapshotProvider value={{ snapshot, mode: 'published', scene: 'demo', source: 'local', editable: true }}>
+        <Routes>
+          <Route element={<Shell mode="published" onExitPreview={() => undefined} scene="demo" source="local" editable />}>
+            <Route index element={<Home />} />
+            <Route path="stories" element={<Stories />} />
+            <Route path="stories/:id" element={<RecordDetail />} />
+            <Route path="album" element={<Album />} />
+            <Route path="archive" element={<Archive />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </SnapshotProvider>
+    </AuthorReloadContext.Provider>
+  )
+}
+
+function Root() {
+  const { loading, phase } = useApp()
+  if (loading || phase === 'loading') return <Loading text="正在打开你的记录…" />
+  if (phase === 'empty') return <StartGate />
+  return <AuthorViewer />
 }
 
 export default function App() {
@@ -106,7 +88,7 @@ export default function App() {
     <AppProvider>
       <ToastProvider>
         <ConfirmProvider>
-          <Shell />
+          <Root />
         </ConfirmProvider>
       </ToastProvider>
     </AppProvider>

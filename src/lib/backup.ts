@@ -13,6 +13,7 @@ import type {
   Wish,
 } from '../db/types'
 import { downloadBlob } from './exporter'
+import { withDeletionsSuppressed } from './tombstones'
 
 export const BACKUP_VERSION = 1
 export const BACKUP_APP_ID = 'heartlog'
@@ -246,7 +247,8 @@ export async function applyBackupData(
     ['meta', db.meta, data.meta ?? []],
   ] as const
 
-  await db.transaction(
+  const runImport = () =>
+    db.transaction(
     'rw',
     [db.persons, db.preferences, db.entries, db.dailyStatus, db.health, db.gifts, db.wishes, db.photos, db.insights, db.summaries, db.meta],
     async () => {
@@ -297,7 +299,12 @@ export async function applyBackupData(
         result.skipped[name] = skipped
       }
     },
-  )
+    )
+
+  // 覆盖导入会整表清空：这段时间必须停掉墓碑采集，
+  // 否则「恢复备份」会被记成一堆删除，同步时把云端数据一起删掉。
+  if (mode === 'replace') await withDeletionsSuppressed(runImport)
+  else await runImport()
 
   return result
 }
@@ -360,7 +367,8 @@ export async function importBackupZip(file: File, mode: ImportMode = 'merge'): P
 /* ------------------------------------------------------------------ */
 
 export async function wipeAllData(): Promise<void> {
-  await db.transaction(
+  await withDeletionsSuppressed(() =>
+    db.transaction(
     'rw',
     [db.persons, db.preferences, db.entries, db.dailyStatus, db.health, db.gifts, db.wishes, db.photos, db.insights, db.summaries, db.meta],
     async () => {
@@ -378,6 +386,7 @@ export async function wipeAllData(): Promise<void> {
         db.meta.clear(),
       ])
     },
+    ),
   )
 }
 

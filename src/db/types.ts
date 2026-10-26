@@ -215,6 +215,10 @@ export interface Photo {
   /** 是否保留原图 */
   keepOriginal: boolean
   createdAt: string
+  /** 已上传到云端对象存储的路径（含则不再重复上传） */
+  cloudFull?: string
+  /** 缩略图在云端对象存储的路径 */
+  cloudThumb?: string
 }
 
 /** 个人画像条目 */

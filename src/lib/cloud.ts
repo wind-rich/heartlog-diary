@@ -39,9 +39,88 @@ export type CloudBackupInsert = {
   device?: string | null
 }
 
+type SyncRowShape = {
+  owner_id: string
+  entity: string
+  row_id: string
+  person_id: string | null
+  updated_at: string
+  deleted: boolean
+  payload: Record<string, unknown>
+}
+
+type PublicSnapshotRow = {
+  owner_id: string
+  publish_id: string
+  payload: Record<string, unknown>
+  counts: Record<string, number>
+  is_live: boolean
+  published_at: string
+}
+
+type PublicMediaRowShape = {
+  owner_id: string
+  photo_id: string
+  kind: string
+  publish_id: string
+  mime: string
+  bytes: number
+  data_b64: string
+  fingerprint: string
+  is_live: boolean
+  updated_at: string
+}
+
 type HeartLogDatabase = {
   public: {
     Tables: {
+      heartlog_sync_rows: {
+        Row: SyncRowShape
+        Insert: {
+          entity: string
+          row_id: string
+          person_id?: string | null
+          updated_at?: string
+          deleted?: boolean
+          payload?: Record<string, unknown>
+        }
+        Update: Partial<{ person_id: string | null; updated_at: string; deleted: boolean; payload: Record<string, unknown> }>
+        Relationships: []
+      }
+      heartlog_public_snapshot: {
+        Row: PublicSnapshotRow
+        Insert: {
+          publish_id: string
+          payload: Record<string, unknown>
+          counts?: Record<string, number>
+          is_live?: boolean
+          published_at?: string
+        }
+        Update: Partial<{
+          publish_id: string
+          payload: Record<string, unknown>
+          counts: Record<string, number>
+          is_live: boolean
+          published_at: string
+        }>
+        Relationships: []
+      }
+      heartlog_public_media: {
+        Row: PublicMediaRowShape
+        Insert: {
+          photo_id: string
+          kind: string
+          mime: string
+          bytes: number
+          data_b64: string
+          fingerprint?: string
+          publish_id?: string
+          is_live?: boolean
+          updated_at?: string
+        }
+        Update: Partial<{ mime: string; bytes: number; data_b64: string; fingerprint: string; is_live: boolean; publish_id: string }>
+        Relationships: []
+      }
       heartlog_backups: {
         Row: CloudBackupRow
         Insert: CloudBackupInsert

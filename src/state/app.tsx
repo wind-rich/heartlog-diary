@@ -16,9 +16,17 @@ import { aiReady } from '../lib/ai'
 import { cloud } from '../lib/cloud'
 import { fetchCloudUser } from '../lib/cloudAuth'
 
+type StartupPhase = 'loading' | 'empty' | 'ready'
+
 interface AppState {
   person?: Person
   loading: boolean
+  /** loading = 正在读本机库；empty = 本机没有任何记录（显示启动引导）；ready = 可以编辑 */
+  phase: StartupPhase
+  /** 明确新建空白档案（只在本机，不上传、不发布） */
+  startBlank: () => Promise<void>
+  /** 导入或恢复之后重新读取人物并进入可编辑状态 */
+  markReady: () => Promise<void>
   refreshPerson: () => Promise<void>
   updatePerson: (patch: Partial<Person>) => Promise<void>
   aiConfig: AIConfig
@@ -37,6 +45,7 @@ const Ctx = createContext<AppState | undefined>(undefined)
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [person, setPerson] = useState<Person>()
   const [loading, setLoading] = useState(true)
+  const [phase, setPhase] = useState<StartupPhase>('loading')
   const [aiConfig, setAIConfigState] = useState<AIConfig>(DEFAULT_AI)
   const [prefs, setPrefsState] = useState<AppPrefs>(DEFAULT_PREFS)
   const [cloudUser, setCloudUser] = useState<CloudUser | null>(null)
@@ -45,13 +54,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const p = await ensurePrimaryPerson()
+      // 注意：这里只读取，不创建。空设备交给启动引导，避免「打开就自动生成空白档案」。
+      const p = await getPrimaryPerson()
       const ai = await getMeta<AIConfig>('aiConfig', DEFAULT_AI)
       const pr = await getMeta<AppPrefs>('prefs', DEFAULT_PREFS)
       if (!alive) return
       setPerson(p)
       setAIConfigState(ai)
       setPrefsState(pr)
+      setPhase(p ? 'ready' : 'empty')
       setLoading(false)
     })()
     return () => {
@@ -71,8 +82,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // 首次读取登录态，并订阅登录态变化
+  // 进入可编辑状态后才检查登录态：空白首屏不做认证探测
   useEffect(() => {
+    if (phase !== 'ready') return
     void refreshCloudUser()
     const unsubscribe = cloud.auth.onAuthStateChange(() => {
       void refreshCloudUser()
@@ -84,7 +96,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // 忽略取消订阅失败
       }
     }
-  }, [refreshCloudUser])
+  }, [phase, refreshCloudUser])
 
   // 人物档案在别处被修改时保持同步
   const livePerson = useLiveQuery(async () => {
@@ -97,9 +109,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [livePerson])
 
   const refreshPerson = useCallback(async () => {
-    // 重新从库里读一次，避免拿到被缓存的旧对象
-    const p = (await getPrimaryPerson()) ?? (await ensurePrimaryPerson())
+    // 重新从库里读一次，避免拿到被缓存的旧对象；空库时回到引导状态
+    const p = await getPrimaryPerson()
+    if (!p) {
+      setPerson(undefined)
+      setPhase('empty')
+      return
+    }
     setPerson({ ...p })
+    setPhase('ready')
+  }, [])
+
+  const startBlank = useCallback(async () => {
+    // 只有用户明确选择「从空白开始」才创建人物
+    const p = await ensurePrimaryPerson()
+    setPerson(p)
+    setPhase('ready')
+  }, [])
+
+  const markReady = useCallback(async () => {
+    const p = await getPrimaryPerson()
+    if (!p) {
+      setPhase('empty')
+      return
+    }
+    setPerson({ ...p })
+    setPhase('ready')
   }, [])
 
   const updatePerson = useCallback(
@@ -130,6 +165,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     () => ({
       person,
       loading,
+      phase,
+      startBlank,
+      markReady,
       refreshPerson,
       updatePerson,
       aiConfig,
@@ -143,6 +181,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [
       person,
       loading,
+      phase,
+      startBlank,
+      markReady,
       refreshPerson,
       updatePerson,
       aiConfig,

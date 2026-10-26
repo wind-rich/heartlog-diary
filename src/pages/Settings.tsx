@@ -24,6 +24,8 @@ import { exportBackup, importBackupZip, storageEstimate, wipeAllData, type Impor
 import { fmtSize } from '../lib/photo'
 import { Field, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../components/ui'
 import { CloudPanel } from '../components/CloudPanel'
+import { SyncPanel } from '../components/SyncPanel'
+import { PublishPanel } from '../components/PublishPanel'
 import { useApp } from '../state/app'
 
 export default function SettingsPage() {
@@ -138,7 +140,8 @@ export default function SettingsPage() {
     }
   }
 
-  const totalCounts = db.tables
+  // tombstones 是同步内部状态，不是用户数据，不在统计里露出
+  const totalCounts = db.tables.filter((t) => t.name !== 'tombstones')
 
   return (
     <div className="space-y-3 pb-6">
@@ -276,6 +279,10 @@ export default function SettingsPage() {
 
       {/* 云服务 */}
       <CloudPanel />
+
+      <SyncPanel />
+
+      <PublishPanel />
 
       {/* 照片 */}
       <SectionCard

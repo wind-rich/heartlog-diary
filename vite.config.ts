@@ -21,5 +21,17 @@ export default defineConfig({
   build: {
     target: 'es2020',
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      /**
+       * 两个入口：
+       * - index.html  作者端（本地编辑，使用 IndexedDB）
+       * - viewer.html 展示端（只读发布快照，不加载数据库与云 SDK）
+       * 使用相对路径，避免工作区目录联接导致绝对路径与 root 不一致。
+       */
+      input: {
+        main: 'index.html',
+        viewer: 'viewer.html',
+      },
+    },
   },
 })

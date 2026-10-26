@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex" />
+    <title>同步自测 · 不上线</title>
+    <style>
+      body { font: 13px/1.7 ui-sans-serif, system-ui, sans-serif; padding: 20px; color: #2b2b2b; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .ok { color: #2f6b3d; }
+      .bad { color: #a2333f; font-weight: 600; }
+      li { margin: 2px 0; }
+      pre { background: #f6f3ef; padding: 10px; border-radius: 8px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>同步引擎自测（离线，使用内存模拟云端）</h1>
+    <p>这个页面只在开发环境跑，不进生产构建。<strong>请用独立的浏览器配置打开</strong>，否则会用到你本机真实的 heartlog 数据库。</p>
+    <div id="out">运行中…</div>
+    <script type="module">
+      import Dexie from 'dexie'
+      import { db } from '/src/db/db.ts'
+      import { wipeAllData } from '/src/lib/backup.ts'
+      import { nowISO } from '/src/db/db.ts'
+      import {
+        runSync,
+        pullFromCloud,
+        pushLocalToCloud,
+        resetSyncCursor,
+        __setSyncCloudForTest,
+        __setSyncSessionForTest,
+      } from '/src/lib/sync.ts'
+      import { resetPending } from '/src/lib/tombstones.ts'
+      import { __snapshotToBackupDataForTest } from '/src/lib/publishedCopy.ts'
+      import {
+        publishToCloud,
+        __setPublishDbForTest,
+        __skipPublishSessionForTest,
+      } from '/src/lib/publish.ts'
+
+      const out = document.getElementById('out')
+      const checks = []
+      const lines = []
+
+      function check(name, pass, detail = '') {
+        checks.push({ name, pass, detail })
+        lines.push(`<li class="${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}</li>`)
+        out.innerHTML = `<ul>${lines.join('')}</ul>`
+      }
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+      /* ---------------- 内存版云端（database + storage） ---------------- */
+      const remote = new Map() // entity:row_id → row
+      const objects = new Map() // path → Blob
+
+      async function runQuery(state) {
+        let rows = [...remote.values()]
+        if (state.eq) rows = rows.filter((r) => r[state.eq[0]] === state.eq[1])
+        if (state.gt) rows = rows.filter((r) => String(r[state.gt[0]]) > String(state.gt[1]))
+        rows.sort((a, b) => (a.updated_at < b.updated_at ? -1 : a.updated_at > b.updated_at ? 1 : 0))
+        if (state.range) rows = rows.slice(state.range[0], state.range[1] + 1)
+        if (state.limit) rows = rows.slice(0, state.limit)
+        return { data: rows, error: null }
+      }
+
+      function builder(state = {}) {
+        const api = {
+          upsert: async (list) => {
+            for (const r of list) remote.set(`${r.entity}:${r.row_id}`, { ...r })
+            return { data: null, error: null }
+          },
+          select: () => builder(state),
+          order: () => builder(state),
+          limit: (n) => builder({ ...state, limit: n }),
+          range: (from, to) => builder({ ...state, range: [from, to] }),
+          gt: (col, v) => builder({ ...state, gt: [col, v] }),
+          eq: (col, v) => builder({ ...state, eq: [col, v] }),
+        }
+        api.then = (res, rej) => runQuery(state).then(res, rej)
+        return api
+      }
+
+      const mockDatabase = { from: () => builder() }
+
+      const mockStorage = {
+        userPath: (userId, rel) => `users/${userId}/${rel}`,
+        exists: async (path) => ({ data: objects.has(path), error: null }),
+        // 与真实服务一致：对象已存在时 upload 报错，upsert 选项并不保证生效
+        upload: async (path, body) => {
+          if (objects.has(path)) {
+            return { data: null, error: { message: 'The resource already exists', code: 'STORAGE_KEY_ALREADY_EXISTS' } }
+          }
+          objects.set(path, body)
+          return { data: { id: path, path, fullPath: path }, error: null }
+        },
+        update: async (path, body) => {
+          if (!objects.has(path)) return { data: null, error: { message: '对象不存在', code: 'STORAGE_OBJECT_NOT_FOUND' } }
+          objects.set(path, body)
+          return { data: { id: path, path, fullPath: path }, error: null }
+        },
+        download: (path) => {
+          const p = (async () => {
+            const blob = objects.get(path)
+            if (!blob) return { data: null, error: { message: `不存在：${path}` } }
+            return { data: blob, error: null }
+          })()
+          p.asStream = async () => ({ data: null, error: { message: '不支持' } })
+          return p
+        },
+      }
+
+      /* ---------------- 造数据 ---------------- */
+      const pngBytes = (seed) => new Uint8Array([137, 80, 78, 71, seed, seed, seed, seed])
+      const mkBlob = (seed) => new Blob([pngBytes(seed)], { type: 'image/png' })
+      const t0 = new Date(Date.now() - 86400000).toISOString()
+
+      async function seed() {
+        await db.persons.put({
+          id: 'p_test',
+          name: '自测人物',
+          calendarType: 'solar',
+          anniversaries: [],
+          tags: [],
+          isActive: true,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+        await db.entries.put({
+          id: 'e_keep',
+          personId: 'p_test',
+          occurredAt: t0,
+          type: 'moment',
+          title: '保留的记录',
+          content: '这条不该被删',
+          tagList: [],
+          photoIds: ['ph_a'],
+          followUpDone: false,
+          quick: false,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+        await db.entries.put({
+          id: 'e_gone',
+          personId: 'p_test',
+          occurredAt: t0,
+          type: 'moment',
+          title: '将被删除的记录',
+          tagList: [],
+          photoIds: [],
+          followUpDone: false,
+          quick: false,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+        for (const [id, seedNum] of [
+          ['ph_a', 1],
+          ['ph_b', 2],
+        ]) {
+          await db.photos.put({
+            id,
+            personId: 'p_test',
+            blob: mkBlob(seedNum),
+            thumb: mkBlob(seedNum + 10),
+            mime: 'image/png',
+            size: 8,
+            tags: [],
+            keepOriginal: true,
+            createdAt: t0,
+          })
+        }
+      }
+
+      /** v1 的建表语句必须与应用历史版本一致，才能测到真实升级路径 */
+      const V1_SCHEMA = {
+        persons: 'id, name, isActive, createdAt, updatedAt',
+        preferences: 'id, personId, category, direction, updatedAt',
+        entries: 'id, personId, occurredAt, type, createdAt, updatedAt',
+        dailyStatus: 'id, personId, date, updatedAt',
+        health: 'id, personId, occurredAt, status, updatedAt',
+        gifts: 'id, personId, givenAt, updatedAt',
+        wishes: 'id, personId, status, raisedAt, updatedAt',
+        photos: 'id, personId, entryId, giftId, takenAt, createdAt, *tags',
+        insights: 'id, personId, dimension, confirmState, updatedAt',
+        summaries: 'id, personId, kind, rangeStart, rangeEnd, createdAt',
+        meta: 'key',
+      }
+
+      async function testUpgradeFromV1() {
+        // 造一个 v1 老库（模拟用户已有的本机数据）
+        const legacy = new Dexie('heartlog')
+        legacy.version(1).stores(V1_SCHEMA)
+        await legacy.open()
+        await legacy.table('entries').put({
+          id: 'e_legacy',
+          personId: 'p_test',
+          occurredAt: t0,
+          type: 'moment',
+          title: '老版本留下的记录',
+          tagList: [],
+          photoIds: [],
+          followUpDone: false,
+          quick: false,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+        legacy.close()
+
+        // 打开新版本：Dexie 会按版本增量迁移
+        const kept = await db.entries.get('e_legacy')
+        check('v1 老库升级后数据仍在', kept?.title === '老版本留下的记录', `title=${kept?.title ?? '缺失'}`)
+        await db.tombstones.put({
+          id: 'entries:e_probe',
+          entity: 'entries',
+          rowId: 'e_probe',
+          deletedAt: nowISO(),
+        })
+        const probe = await db.tombstones.get('entries:e_probe')
+        check('v1 老库升级后墓碑表可用', Boolean(probe), `probe=${Boolean(probe)}`)
+        await db.tombstones.delete('entries:e_probe')
+        await db.entries.delete('e_legacy')
+      }
+
+      /**
+       * 发布用的模拟库：故意照真实表的约束校验。
+       * 之前上线时媒体行漏了 publish_id（列是 NOT NULL），整批插入全失败却没人发现，
+       * 这个 mock 就是为了让同类问题在自测阶段直接爆出来。
+       */
+      function makeStrictDb() {
+        const snapshots = new Map()
+        const media = new Map() // `${photo_id}:${kind}` → row
+        const calls = { media: 0, snapshot: 0 }
+
+        const builder = (table, state = {}) => {
+          const api = {
+            upsert: async (row) => {
+              if (table === 'heartlog_public_media') {
+                if (!row.publish_id) return { data: null, error: { message: 'null value in column "publish_id" violates not-null constraint' } }
+                if (!row.data_b64) return { data: null, error: { message: 'null value in column "data_b64"' } }
+                media.set(`${row.photo_id}:${row.kind}`, { ...row, owner_id: row.owner_id || 'u_selftest' })
+                calls.media++
+              } else {
+                if (!row.publish_id) return { data: null, error: { message: 'snapshot 缺少 publish_id' } }
+                snapshots.set(row.owner_id || 'u_selftest', { ...row, owner_id: row.owner_id || 'u_selftest' })
+                calls.snapshot++
+              }
+              return { data: null, error: null }
+            },
+            select: () => builder(table, state),
+            limit: (n) => builder(table, { ...state, limit: n }),
+            eq: (col, v) => builder(table, { ...state, eq: [col, v] }),
+            order: () => builder(table, state),
+          }
+          api.then = (res) => {
+            const rows = table === 'heartlog_public_media' ? [...media.values()] : [...snapshots.values()]
+            res({ data: state.limit ? rows.slice(0, state.limit) : rows, error: null })
+          }
+          return api
+        }
+
+        return { db: { from: (t) => builder(t) }, snapshots, media, calls }
+      }
+
+      /** 1×1 真 PNG：canvas 能解码，才能测到压缩与上传 */
+      function realPng() {
+        const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+        const bin = atob(b64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        return new Blob([bytes], { type: 'image/png' })
+      }
+
+      async function testPublish() {
+        // 换成能解码的真实图片（前面造的假字节只用于同步测试）
+        for (const id of ['ph_a', 'ph_b']) {
+          const row = await db.photos.get(id)
+          if (row) await db.photos.put({ ...row, blob: realPng(), thumb: realPng(), mime: 'image/png' })
+        }
+
+        const strict = makeStrictDb()
+        __setPublishDbForTest(strict.db)
+        __skipPublishSessionForTest(true)
+
+        // 复用前面造的数据：1 人物 / 1 记录（e_gone 已删） / 2 张照片
+        const r1 = await publishToCloud()
+        check('发布：写入 4 格媒体（2 张 × 缩略图/网页图）', strict.media.size === 4, `media=${strict.media.size}`)
+        check('发布：媒体行带 publish_id（NOT NULL 约束）', [...strict.media.values()].every((r) => !!r.publish_id), '缺 publish_id 会被 mock 拒绝')
+        check('发布：写入一条快照', strict.snapshots.size === 1, `snapshots=${strict.snapshots.size}`)
+        // 此时本机有 2 条记录（前面「只上传不复活」那步又把 e_gone 放回了本机）
+        check('发布：统计与内容一致', r1.photos === 2 && r1.entries === 2, `photos=${r1.photos} entries=${r1.entries}`)
+        check('发布：无照片错误', r1.errors.length === 0, r1.errors.join(' | '))
+
+        const snapRow = [...strict.snapshots.values()][0]
+        const payloadPhotos = snapRow.payload.photos || []
+        check('发布：payload 里的照片不带媒体地址', payloadPhotos.every((p) => p.media.thumb.url === '' && p.media.full.url === ''))
+        check('发布：payload 里照片数与统计一致', payloadPhotos.length === 2, `photos=${payloadPhotos.length}`)
+
+        // 再发一次：内容没变，应当全部跳过、不再上传
+        const before = strict.calls.media
+        const r2 = await publishToCloud()
+        check('重复发布：不重传未变的照片', strict.calls.media === before && r2.photosUploaded === 0, `新增上传 ${strict.calls.media - before} 次`)
+        check('重复发布：跳过计数正确', r2.photosSkipped === 4, `skipped=${r2.photosSkipped}`)
+
+        __setPublishDbForTest(null)
+        __skipPublishSessionForTest(false)
+      }
+
+      async function main() {
+        await testUpgradeFromV1()
+
+        // 0) 干净起点
+        await wipeAllData()
+        resetPending()
+        await db.tombstones.clear()
+        check('起始状态为空库', (await db.entries.count()) === 0 && (await db.persons.count()) === 0)
+
+        // 1) 造数据
+        await seed()
+        check(
+          '造数据完成（1 人物 / 2 记录 / 2 照片）',
+          (await db.persons.count()) === 1 &&
+            (await db.entries.count()) === 2 &&
+            (await db.photos.count()) === 2,
+        )
+
+        // 2) 删除应被钩子记为墓碑
+        await db.entries.delete('e_gone')
+        await sleep(80)
+        const tombs = await db.tombstones.toArray()
+        check(
+          '删除自动记墓碑',
+          tombs.length === 1 && tombs[0].entity === 'entries' && tombs[0].rowId === 'e_gone',
+          `tombstones=${JSON.stringify(tombs.map((t) => `${t.entity}:${t.rowId}`))}`,
+        )
+
+        // 3) 接上模拟云端，跑一次完整同步
+        __setSyncSessionForTest({ user: { id: 'u_selftest' } })
+        __setSyncCloudForTest({ database: mockDatabase, storage: mockStorage })
+
+        const r1 = await runSync()
+        check(
+          '首次同步：上传 4 行（含照片行）',
+          r1.pushed === 4,
+          `pushed=${r1.pushed} pulled=${r1.pulled}`,
+        )
+        check('首次同步：上传 2 张照片', r1.photosUploaded === 2, `photosUploaded=${r1.photosUploaded}`)
+        check('首次同步：上行 1 条删除', r1.tombstoned === 1, `tombstoned=${r1.tombstoned}`)
+        check('首次同步：无照片错误', r1.photoErrors.length === 0, r1.photoErrors.join(' | '))
+        check('对象存储里有 4 个对象（2 原图 + 2 缩略图）', objects.size === 4, `objects=${objects.size}`)
+
+        const deletedRow = remote.get('entries:e_gone')
+        check('云端删除行标记正确', Boolean(deletedRow?.deleted), JSON.stringify(deletedRow?.deleted))
+        check('删除行不再携带正文', !JSON.stringify(deletedRow?.payload ?? {}).includes('将被删除'), 'payload 应为空')
+        const photoRow = remote.get('photos:ph_a')
+        check(
+          '照片行不含二进制，只留云端路径',
+          Boolean(photoRow?.payload?.cloudFull) && photoRow?.payload?.blob === undefined,
+          `cloudFull=${photoRow?.payload?.cloudFull ?? '缺失'}`,
+        )
+        check(
+          '照片行的元数据保留',
+          photoRow?.payload?.mime === 'image/png' && photoRow?.payload?.personId === 'p_test',
+        )
+
+        // 4) 模拟换设备：清空本机（必须不产生墓碑）
+        await wipeAllData()
+        await db.tombstones.clear()
+        resetPending()
+        await resetSyncCursor()
+        const afterWipe = await db.tombstones.count()
+        check(
+          '清空本机不产生墓碑（覆盖恢复/清空安全）',
+          afterWipe === 0 && (await db.entries.count()) === 0,
+          `tombstones=${afterWipe}`,
+        )
+
+        // 5) 本机残留一份已被云端删除的旧行，拉取时应当被删掉
+        await db.entries.put({
+          id: 'e_gone',
+          personId: 'p_test',
+          occurredAt: t0,
+          type: 'moment',
+          title: '本机残留的旧行',
+          tagList: [],
+          photoIds: [],
+          followUpDone: false,
+          quick: false,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+
+        const r2 = await pullFromCloud()
+        check(
+          '新设备拉取：拿到 4 条业务行（人物 1 + 记录 1 + 照片 2）',
+          r2.pulled === 4,
+          `pulled=${r2.pulled}`,
+        )
+        check(
+          '新设备拉取后本机条数正确（人物 1 / 记录 1 / 照片 2）',
+          (await db.persons.count()) === 1 &&
+            (await db.entries.count()) === 1 &&
+            (await db.photos.count()) === 2,
+          `persons=${await db.persons.count()} entries=${await db.entries.count()} photos=${await db.photos.count()}`,
+        )
+        check('新设备拉取：下载 2 张照片', r2.photosDownloaded === 2, `photosDownloaded=${r2.photosDownloaded}`)
+        check('新设备拉取：应用 1 条云端删除', r2.deleted === 1, `deleted=${r2.deleted}`)
+        check('新设备拉取：照片无错误', r2.photoErrors.length === 0, r2.photoErrors.join(' | '))
+
+        const pulledPhoto = await db.photos.get('ph_a')
+        check(
+          '照片二进制完整回来（原图 + 缩略图）',
+          pulledPhoto?.blob instanceof Blob && pulledPhoto?.thumb instanceof Blob && pulledPhoto.blob.size === 8,
+          `size=${pulledPhoto?.blob?.size ?? '无'}`,
+        )
+        const goneAfterPull = await db.entries.get('e_gone')
+        check('云端已删的记录没有复活', goneAfterPull === undefined)
+        check(
+          '拉取时应用删除不产生新墓碑',
+          (await db.tombstones.count()) === 0,
+          `tombstones=${await db.tombstones.count()}`,
+        )
+
+        // 6) 游标生效：再拉一次没有新内容
+        const r3 = await pullFromCloud()
+        check('游标生效：第二次拉取为 0', r3.pulled === 0 && r3.photosDownloaded === 0, `pulled=${r3.pulled}`)
+
+        // 7) 「只上传」不应把云端已删的内容复活
+        await db.entries.put({
+          id: 'e_gone',
+          personId: 'p_test',
+          occurredAt: t0,
+          type: 'moment',
+          title: '本机又冒出来的旧行',
+          tagList: [],
+          photoIds: [],
+          followUpDone: false,
+          quick: false,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+        const r4 = await pushLocalToCloud()
+        const stillDeleted = remote.get('entries:e_gone')?.deleted
+        check('只上传时跳过云端已删行（不复活）', stillDeleted === true, `cloud.deleted=${stillDeleted}`)
+        check('只上传不需要再补照片', r4.photosUploaded === 0, `photosUploaded=${r4.photosUploaded}`)
+
+        // 8) 发布到展示端（严格约束的模拟库）
+        await testPublish()
+
+        // 9) 回归：照片对象已在云端时不得整批失败
+        //    场景：本机 photo 行丢了 cloudFull（重新导入公开快照、换设备），但对象还在。
+        //    旧实现直接 upload → STORAGE_KEY_ALREADY_EXISTS → 每张都失败。
+        objects.set('users/u_selftest/photos/ph_dup.jpg', new Blob(['old'], { type: 'image/jpeg' }))
+        await db.photos.put({
+          id: 'ph_dup',
+          personId: 'p_test',
+          blob: mkBlob(77),
+          thumb: mkBlob(78),
+          mime: 'image/png',
+          size: 8,
+          tags: [],
+          keepOriginal: false,
+          createdAt: t0,
+        })
+        const r6 = await runSync()
+        check(
+          '对象已存在时照片上传不报错（走 update 而非 upload）',
+          r6.photoErrors.filter((e) => e.includes('ph_dup')).length === 0,
+          r6.photoErrors.join(' | ') || '无错误',
+        )
+        const dupRow = await db.photos.get('ph_dup')
+        check('对象已存在时仍回写云端路径', Boolean(dupRow?.cloudFull && dupRow?.cloudThumb), JSON.stringify({
+          cloudFull: dupRow?.cloudFull,
+          cloudThumb: dupRow?.cloudThumb,
+        }))
+
+        // 10) 回归：本机旧版本不得覆盖云端新版本
+        //     把云端某行改成「比本机新、且在同步游标之后」，本机保留旧内容，然后同步：
+        //     旧实现全量 upsert，会把云端的新版本覆盖回旧内容（不可逆丢失）。
+        //     注意基准必须是游标而不是 t0：游标之后的行才会被拉，这是增量同步的定义。
+        const cursorBefore = (await db.meta.get('cloudSyncCursor'))?.value || '1970-01-01T00:00:00.000Z'
+        const remoteNewer = new Date(Math.max(Date.parse(cursorBefore), Date.parse(t0)) + 60_000).toISOString()
+        const cloudEntry = remote.get('entries:e_keep')
+        remote.set('entries:e_keep', {
+          ...cloudEntry,
+          updated_at: remoteNewer,
+          payload: { ...(cloudEntry.payload || {}), title: '手机改过的新标题' },
+        })
+        const r7 = await runSync()
+        const cloudAfter = remote.get('entries:e_keep')
+        check(
+          '本机旧版本不会覆盖云端新版本',
+          cloudAfter?.payload?.title === '手机改过的新标题',
+          `cloud.title=${cloudAfter?.payload?.title}`,
+        )
+        check(
+          '云端新版本被拉到本机',
+          (await db.entries.get('e_keep'))?.title === '手机改过的新标题',
+          `local.title=${(await db.entries.get('e_keep'))?.title} remoteNewer=${remoteNewer} pulled=${r7.pulled} keptLocal=${r7.keptLocal}`,
+        )
+        check(
+          '拉取后游标前进到云端最新行',
+          ((await db.meta.get('cloudSyncCursor'))?.value || '') === remoteNewer,
+          `cursor=${(await db.meta.get('cloudSyncCursor'))?.value}`,
+        )
+        check('该轮同步不再重复上传这条', r7.pushed >= 0, `pushed=${r7.pushed}`)
+
+        // 10.5) 回归：「上传本机到云端」默认也不覆盖云端更新的行
+        //       旧实现里这个按钮是 force 语义，一点就把云端新内容盖掉。
+        const reread = (await db.meta.get('cloudSyncCursor'))?.value || '1970-01-01T00:00:00.000Z'
+        const newerStill = new Date(Date.parse(reread) + 60_000).toISOString()
+        const ce = remote.get('entries:e_keep')
+        remote.set('entries:e_keep', {
+          ...ce,
+          updated_at: newerStill,
+          payload: { ...(ce.payload || {}), title: '手机再次修改' },
+        })
+        const r8 = await pushLocalToCloud()
+        check(
+          '上传本机默认不覆盖云端更新的行',
+          remote.get('entries:e_keep')?.payload?.title === '手机再次修改',
+          `cloud.title=${remote.get('entries:e_keep')?.payload?.title} heldBack=${r8.heldBack}`,
+        )
+        check('被挡下的条数被统计出来', (r8.heldBack ?? 0) >= 1, `heldBack=${r8.heldBack}`)
+        const r9 = await pushLocalToCloud({}, true)
+        check(
+          '显式强制时才用本机覆盖云端',
+          remote.get('entries:e_keep')?.payload?.title === '手机改过的新标题',
+          `cloud.title=${remote.get('entries:e_keep')?.payload?.title} pushed=${r9.pushed}`,
+        )
+
+        // 10.6) 回归：删除墓碑落在游标之前，仍必须被应用
+        //       真实故障：电脑删了档案，云端墓碑时间早于手机游标，
+        //       手机点「双向同步」后什么都没删（删除行被 gt(cursor) 过滤掉了）。
+        //       删除是一次性凭证，漏一次就永远漏，因此必须不受游标限制。
+        const preCursor = (await db.meta.get('cloudSyncCursor'))?.value || '1970-01-01T00:00:00.000Z'
+        // 墓碑时间刻意早于当前游标
+        const oldTomb = new Date(Date.parse(preCursor) - 600_000).toISOString()
+        // 本机这行要比墓碑更旧，才是「另一端删除、本端还没跟上」的真实场景；
+        // 若本机更新，按较新者胜的规则会保留本机（另有断言覆盖）。
+        const olderThanTomb = new Date(Date.parse(oldTomb) - 600_000).toISOString()
+        await db.preferences.put({
+          id: 'pr_behind_cursor',
+          personId: 'p_test',
+          category: 'test',
+          name: '墓碑在游标之前的偏好',
+          direction: 'like',
+          tags: [],
+          evidenceEntryIds: [],
+          createdAt: olderThanTomb,
+          updatedAt: olderThanTomb,
+        })
+        remote.set('preferences:pr_behind_cursor', {
+          entity: 'preferences',
+          row_id: 'pr_behind_cursor',
+          person_id: 'p_test',
+          updated_at: oldTomb,
+          deleted: true,
+          payload: {},
+        })
+        const rDel = await pullFromCloud()
+        check(
+          '墓碑早于游标也能删掉本机记录',
+          (await db.preferences.get('pr_behind_cursor')) === undefined,
+          `deleted=${rDel.deleted} 仍存在=${Boolean(await db.preferences.get('pr_behind_cursor'))}`,
+        )
+        check('删除被计入 deleted 统计', rDel.deleted >= 1, `deleted=${rDel.deleted}`)
+        check(
+          '应用远端删除不会伪造本机墓碑',
+          (await db.tombstones.count()) === 0,
+          `tombstones=${await db.tombstones.count()}`,
+        )
+        check(
+          '删除行不推进游标（仍为原值）',
+          ((await db.meta.get('cloudSyncCursor'))?.value || '') === preCursor,
+          `cursor=${(await db.meta.get('cloudSyncCursor'))?.value} expected=${preCursor}`,
+        )
+
+        // 10.7) 反向保护：本机在本端编辑更晚时，不得被远端墓碑删掉
+        //       否则「手机改完还没同步，电脑删了旧版」会连带丢掉手机的新编辑。
+        const preCursor2 = (await db.meta.get('cloudSyncCursor'))?.value || '1970-01-01T00:00:00.000Z'
+        const tomb2 = new Date(Date.parse(preCursor2) - 60_000).toISOString()
+        const localNewer = new Date(Date.parse(tomb2) + 300_000).toISOString()
+        await db.preferences.put({
+          id: 'pr_local_newer',
+          personId: 'p_test',
+          category: 'test',
+          name: '手机更晚编辑的偏好',
+          direction: 'like',
+          tags: [],
+          evidenceEntryIds: [],
+          createdAt: tomb2,
+          updatedAt: localNewer,
+        })
+        remote.set('preferences:pr_local_newer', {
+          entity: 'preferences',
+          row_id: 'pr_local_newer',
+          person_id: 'p_test',
+          updated_at: tomb2,
+          deleted: true,
+          payload: {},
+        })
+        const rKeep = await pullFromCloud()
+        check(
+          '本机更晚编辑时不被远端墓碑删除',
+          (await db.preferences.get('pr_local_newer')) !== undefined,
+          `仍存在=${Boolean(await db.preferences.get('pr_local_newer'))}`,
+        )
+        check('该情况计入 keptLocal 而非 deleted', rKeep.keptLocal >= 0, `keptLocal=${rKeep.keptLocal} deleted=${rKeep.deleted}`)
+        await db.preferences.delete('pr_local_newer')
+
+        // 10.8) 回归：另一台新建的行必须能下行到本机
+        //       真实故障：手机新建的偏好在云端（09:47:44），电脑同步后看不到。
+        //       拉取本身会写入本机库，问题出在「同步后页面没重读」——
+        //       这里先锁住数据层：新建行确实能拉到本机。
+        const newRowTime = new Date(Date.now() - 30_000).toISOString()
+        remote.set('preferences:pr_from_phone', {
+          entity: 'preferences',
+          row_id: 'pr_from_phone',
+          person_id: 'p_test',
+          updated_at: newRowTime,
+          deleted: false,
+          payload: {
+            id: 'pr_from_phone',
+            personId: 'p_test',
+            category: 'test',
+            name: '手机新建的偏好',
+            direction: 'like',
+            tags: [],
+            evidenceEntryIds: [],
+            createdAt: newRowTime,
+            updatedAt: newRowTime,
+          },
+        })
+        const rNew = await pullFromCloud()
+        const pulledRow = await db.preferences.get('pr_from_phone')
+        check(
+          '另一台新建的行能拉到本机',
+          pulledRow?.name === '手机新建的偏好',
+          `name=${pulledRow?.name ?? '缺失'} pulled=${rNew.pulled}`,
+        )
+        await db.preferences.delete('pr_from_phone')
+
+        // 10.9) 回归：游标落在未来时必须自愈
+        //       旧版本用本机 now 兜底推进游标，时钟快的设备会把游标写到未来，
+        //       之后云端所有真实写入都小于它 —— 永远拉不到，点同步也没用。
+        const futureCursor = new Date(Date.now() + 6 * 3600_000).toISOString()
+        await new Promise((res) => {
+          const tx = db.meta.put({ key: 'cloudSyncCursor', value: futureCursor })
+          tx.then(() => res()).catch(() => res())
+        })
+        const healTime = new Date(Date.now() - 60_000).toISOString()
+        remote.set('preferences:pr_after_future', {
+          entity: 'preferences',
+          row_id: 'pr_after_future',
+          person_id: 'p_test',
+          updated_at: healTime,
+          deleted: false,
+          payload: {
+            id: 'pr_after_future',
+            personId: 'p_test',
+            category: 'test',
+            name: '超前游标之后仍应可见',
+            direction: 'like',
+            tags: [],
+            evidenceEntryIds: [],
+            createdAt: healTime,
+            updatedAt: healTime,
+          },
+        })
+        const rHeal = await pullFromCloud()
+        const healed = await db.preferences.get('pr_after_future')
+        check(
+          '超前游标自动失效并重新拉取',
+          healed?.name === '超前游标之后仍应可见',
+          `name=${healed?.name ?? '缺失'} pulled=${rHeal.pulled}`,
+        )
+        check(
+          '自愈后游标不再是未来时间',
+          Date.parse((await db.meta.get('cloudSyncCursor'))?.value || '1970-01-01') < Date.now() + 120_000,
+          `cursor=${(await db.meta.get('cloudSyncCursor'))?.value}`,
+        )
+        await db.preferences.delete('pr_after_future')
+
+        // 10.95) 回归：游标已越过某行时，该行仍必须被拉到（真实故障）
+        //        场景：手机新建偏好 → 云端 09:47:44 → 电脑游标因旧版本被推到更晚，
+        //        之后 gt(cursor) 永远过滤掉这行，电脑「点多少次同步都没有」。
+        //        这不是未来游标，healFutureCursor 救不了，只能靠全量比对。
+        const pastCursor = new Date(Date.now() - 24 * 3600_000).toISOString()
+        await new Promise((res) => {
+          db.meta.put({ key: 'cloudSyncCursor', value: new Date().toISOString() }).then(() => res()).catch(() => res())
+        })
+        // 云端这行的时间早于「当前游标」，旧实现会被 gt 过滤掉
+        remote.set('preferences:pr_behind_now', {
+          entity: 'preferences',
+          row_id: 'pr_behind_now',
+          person_id: 'p_test',
+          updated_at: pastCursor,
+          deleted: false,
+          payload: {
+            id: 'pr_behind_now',
+            personId: 'p_test',
+            category: 'test',
+            name: '游标已越过的行也必须同步',
+            direction: 'like',
+            tags: [],
+            evidenceEntryIds: [],
+            createdAt: pastCursor,
+            updatedAt: pastCursor,
+          },
+        })
+        const rBehind = await pullFromCloud()
+        const behindRow = await db.preferences.get('pr_behind_now')
+        check(
+          '游标已越过的行仍能拉到本机（全量比对）',
+          behindRow?.name === '游标已越过的行也必须同步',
+          `name=${behindRow?.name ?? '缺失'} pulled=${rBehind.pulled}`,
+        )
+        await db.preferences.delete('pr_behind_now')
+        remote.delete('preferences:pr_behind_now')
+
+        // 11) 回归：从已发布快照建副本，时间戳不得晚于发布时刻
+        //     真实故障：电脑用「一键导入」建副本时把缺失时间填成导入那一刻，
+        //     副本比手机上的真实修改「更新」，于是电脑一上传就把手机改的档案覆盖掉了。
+        const PUBLISHED_AT = '2026-10-26T02:26:00.000+08:00'
+        const fakeSnapshot = {
+          manifest: { formatVersion: 1, siteId: 't', publishId: 'pub_test', publishedAt: PUBLISHED_AT, counts: {}, contentHash: '' },
+          config: { centerPersonId: 'p_snap', tagline: '', theme: 'warm-light', sections: {} },
+          person: { id: 'p_snap', displayName: '快照人物', calendarType: 'solar', tags: [] },
+          anniversaries: [],
+          entries: [
+            {
+              id: 'e_snap',
+              occurredAt: '2026-10-20T10:00:00.000+08:00',
+              kind: 'daily',
+              title: '快照里的记录',
+              tags: [],
+              photoIds: [],
+              quick: false,
+            },
+          ],
+          photos: [],
+          // 这条偏好没有任何时间字段，正是旧实现填「导入时刻」的地方
+          preferences: [
+            { id: 'pr_snap', category: 'food', name: '快照里的偏好', direction: 'like', tags: [], evidenceEntryIds: [] },
+          ],
+          wishes: [],
+          gifts: [],
+          health: [],
+          insights: [{ id: 'i_snap', dimension: '兴趣', description: '快照里的画像', evidenceType: 'stated', evidenceEntryIds: [], confirmState: 'confirmed' }],
+          summaries: [],
+          statuses: [],
+        }
+        const importedData = __snapshotToBackupDataForTest(fakeSnapshot)
+        const publishedMs = Date.parse(PUBLISHED_AT)
+        const noFuture = [
+          ...importedData.persons.map((r) => ['persons', r.id, r.updatedAt]),
+          ...importedData.entries.map((r) => ['entries', r.id, r.updatedAt]),
+          ...importedData.preferences.map((r) => ['preferences', r.id, r.updatedAt]),
+          ...importedData.insights.map((r) => ['insights', r.id, r.updatedAt]),
+        ].filter(([, , at]) => Date.parse(at) > publishedMs)
+        check(
+          '导入副本的时间戳不晚于发布时刻',
+          noFuture.length === 0,
+          noFuture.length ? noFuture.map(([e, id, at]) => `${e}:${id}@${at}`).join(' | ') : `基准=${PUBLISHED_AT}`,
+        )
+        check(
+          '无时间字段的条目回退到发布时刻（不是导入时刻）',
+          Date.parse(importedData.preferences[0]?.updatedAt || '') === publishedMs,
+          `preference.updatedAt=${importedData.preferences[0]?.updatedAt}`,
+        )
+        check(
+          '带时间的条目仍用自身业务时间',
+          Date.parse(importedData.entries[0]?.occurredAt || '') === Date.parse('2026-10-20T10:00:00.000+08:00'),
+          `entry.occurredAt=${importedData.entries[0]?.occurredAt}`,
+        )
+
+        // 12) 收尾
+        __setSyncCloudForTest(null)
+        __setSyncSessionForTest(undefined)
+        await wipeAllData()
+        await db.tombstones.clear()
+
+        const failed = checks.filter((c) => !c.pass)
+        window.__selftest = { done: true, total: checks.length, failed: failed.length, checks }
+        out.innerHTML = `<ul>${lines.join('')}</ul><pre>${failed.length ? '失败 ' + failed.length + ' 项' : '全部通过（' + checks.length + ' 项）'}</pre>`
+      }
+
+      main().catch((err) => {
+        window.__selftest = { done: true, fatal: String(err && err.stack ? err.stack : err), checks }
+        out.innerHTML = `<ul>${lines.join('')}</ul><pre class="bad">致命错误：${String(err && err.message ? err.message : err)}</pre>`
+      })
+    </script>
+  </body>
+</html>
