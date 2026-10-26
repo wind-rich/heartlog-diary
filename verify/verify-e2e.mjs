@@ -1,4 +1,10 @@
 /**
+ * ⚠️ 历史脚本（2026-10-26 21:4x 标注）：本文件锚定的是**已下线的旧导航**
+ * （今天 / 时间线 / 回顾），这些页面已不在路由里，直接跑会大量失败。
+ * 现行回归请用：verify:sync / verify:tasks / verify:bundle / verify:game /
+ * verify:v4 / verify:author，以及 verify/verify-*-ui.mjs 与 verify-publish-site.mjs。
+ * 保留本文件只为记录早期验收口径，不要把它当作当前质量门禁。
+ *
  * 心意簿 端到端验证脚本（Chrome CDP，无第三方依赖）
  *
  * 用法：
