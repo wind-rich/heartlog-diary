@@ -525,7 +525,8 @@
       /* ================================================================ */
       async function testBackupCompat() {
         const before = await countTasks()
-        check('备份版本升到 2', BACKUP_VERSION === 2, String(BACKUP_VERSION))
+        // v3 起备份多出 memoirs（T5）；这条断言用来钉住「加了新实体就要升版本」
+        check('备份版本升到 3', BACKUP_VERSION === 3, String(BACKUP_VERSION))
 
         const collected = await collectBackupData()
         check(

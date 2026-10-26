@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie'
 import { recordDeletion, setTombstoneSink, TOMBSTONE_ENTITIES, type Tombstone } from '../lib/tombstones'
 import type { ConflictCopy } from '../lib/conflicts'
 import type { Task, TaskOccurrence, TaskReminder } from '../tasks/types'
+import type { Memoir } from '../memoir/types'
 import type {
   AIConfig,
   AppPrefs,
@@ -35,6 +36,7 @@ export class HeartLogDB extends Dexie {
   tasks!: Table<Task, string>
   taskReminders!: Table<TaskReminder, string>
   taskOccurrences!: Table<TaskOccurrence, string>
+  memoirs!: Table<Memoir, string>
 
   constructor() {
     super('heartlog')
@@ -71,6 +73,16 @@ export class HeartLogDB extends Dexie {
       tasks: 'id, personId, status, kind, dueDate, updatedAt, *seriesId',
       taskReminders: 'id, taskId, enabled, updatedAt',
       taskOccurrences: 'id, taskId, slotAt, firedAt, readAt',
+    })
+    /**
+     * v5：T5 回忆录。仍是增量新增，不动 v1~v4 任何表。
+     *
+     * 只建一张表：章节作为 `sections` 数组存在回忆录行内。
+     * 章节数量是个位数到几十，单独建表会引入「章节与回忆录不同步」的中间态，
+     * 而它们本来就是整篇一起编辑、一起保存的。
+     */
+    this.version(5).stores({
+      memoirs: 'id, personId, status, updatedAt',
     })
   }
 }

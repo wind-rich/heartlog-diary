@@ -720,6 +720,80 @@ try {
   await cdp.shot('08-author-sync-panel.png')
 
 
+  /* ---------- T5 回忆录：新建 → 加章节 → 写字 → 保存 → 刷新仍在 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/#/memoir` })
+  await sleep(2600)
+  const memoirPage = await cdp.evaluate(`({
+    hasNav: document.body.innerText.includes('回忆录'),
+    hasCreate: [...document.querySelectorAll('button')].some(b => b.innerText.includes('新建回忆录')),
+  })`)
+  if (!memoirPage.hasNav) problems.push('作者端没有回忆录入口')
+  if (!memoirPage.hasCreate) problems.push('回忆录页缺少「新建回忆录」按钮')
+
+  const created = await cdp.evaluate(`(async () => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('新建回忆录'));
+    btn?.click();
+    await new Promise(r => setTimeout(r, 800));
+    const db = await new Promise((res) => { const r = indexedDB.open('heartlog'); r.onsuccess = () => res(r.result) });
+    const all = await new Promise((res) => { const q = db.transaction('memoirs').objectStore('memoirs').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    return { count: all.length, id: all[0]?.id ?? null };
+  })()`)
+  if (created.count !== 1) problems.push(`新建回忆录后库里有 ${created.count} 本，预期 1 本`)
+
+  const filled = await cdp.evaluate(`(async () => {
+    const setVal = (el, v) => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const title = document.querySelector('input[placeholder="回忆录标题"]');
+    if (!title) return { error: '没有标题输入框' };
+    setVal(title, '自测回忆录标题');
+    const add = [...document.querySelectorAll('button')].find(b => b.innerText.includes('添加章节'));
+    if (!add) return { error: '没有添加章节按钮' };
+    add.click();
+    await new Promise(r => setTimeout(r, 600));
+    const ta = document.querySelector('textarea');
+    if (!ta) return { error: '加章节后没有正文输入框' };
+    setVal(ta, '这一章是界面里写进去的。');
+    const save = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === '保存');
+    if (!save) return { error: '没有保存按钮' };
+    save.click();
+    await new Promise(r => setTimeout(r, 900));
+    return { ok: true };
+  })()`)
+  if (filled?.error) problems.push(`回忆录编辑失败：${filled.error}`)
+
+  const saved = await cdp.evaluate(`(async () => {
+    const db = await new Promise((res) => { const r = indexedDB.open('heartlog'); r.onsuccess = () => res(r.result) });
+    const all = await new Promise((res) => { const q = db.transaction('memoirs').objectStore('memoirs').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    const m = all[0];
+    return m ? { title: m.title, sections: m.sections?.length ?? 0, body: m.sections?.[0]?.body ?? '' } : null;
+  })()`)
+  if (!saved) problems.push('回忆录没有写进本机库')
+  else {
+    if (saved.title !== '自测回忆录标题') problems.push(`标题未保存：${saved.title}`)
+    if (saved.sections !== 1) problems.push(`章节数 ${saved.sections}，预期 1`)
+    if (!saved.body.includes('界面里写进去的')) problems.push(`正文未保存：${saved.body.slice(0, 20)}`)
+  }
+
+  await cdp.send('Page.reload', { ignoreCache: true })
+  await sleep(2600)
+  const persisted = await cdp.evaluate(`document.body.innerText.includes('自测回忆录标题')`)
+  if (!persisted) problems.push('刷新后回忆录标题不显示（读写或渲染有问题）')
+  notes.push(`回忆录：新建=1 本，章节=1，正文已保存，刷新后仍在=${persisted}`)
+  await cdp.shot('09-memoir.png')
+
+  // 清掉自测数据，避免影响后续人工查看
+  await cdp.evaluate(`(async () => {
+    const db = await new Promise((res) => { const r = indexedDB.open('heartlog'); r.onsuccess = () => res(r.result) });
+    await new Promise((res) => { const q = db.transaction('memoirs', 'readwrite').objectStore('memoirs').clear(); q.onsuccess = () => res(); });
+    db.close();
+    return true;
+  })()`)
+
   if (cdp.logs.length) problems.push(`控制台错误：${cdp.logs.slice(0, 2).join(' | ')}`)
 } finally {
   try {

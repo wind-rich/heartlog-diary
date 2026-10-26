@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>T5 文稿包与回忆录 · 离线自测</title>
+    <style>
+      body { font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 16px; background: #fffcf8; color: #2d2420; }
+      ul { padding-left: 18px; }
+      li.ok { color: #3f6b4a; }
+      li.bad { color: #a3402f; }
+      pre { background: #f6efe6; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size: 15px">T5 文稿包与回忆录 · 离线自测</h1>
+    <div id="out">运行中…</div>
+    <script type="module">
+      import JSZip from 'jszip'
+      import { db, nowISO, uid } from '/src/db/db.ts'
+      import { wipeAllData, collectBackupData, applyBackupData, BACKUP_VERSION } from '/src/lib/backup.ts'
+      import { createMarkdownBundle } from '/src/lib/markdownBundle.ts'
+      import {
+        appendDraft,
+        appendSection,
+        createMemoir,
+        deleteMemoir,
+        emptySection,
+        getMemoir,
+        patchSection,
+        replaceAiSection,
+        sectionLocked,
+      } from '/src/memoir/store.ts'
+
+      const out = document.getElementById('out')
+      const checks = []
+      const lines = []
+      function check(name, pass, detail = '') {
+        checks.push({ name, pass, detail })
+        lines.push(`<li class="${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}</li>`)
+        out.innerHTML = `<ul>${lines.join('')}</ul>`
+      }
+
+      /** 1×1 真 PNG：让图片文件真的能写进 zip */
+      function realPng() {
+        const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+        const bin = atob(b64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        return new Blob([bytes], { type: 'image/png' })
+      }
+
+      const P = 'p_bundle_test'
+
+      async function seed() {
+        const t = '2026-10-24T19:30:00.000+08:00'
+        await db.persons.put({
+          id: P,
+          name: '自测人物',
+          nickname: '小满',
+          calendarType: 'solar',
+          birthday: '1996-05-20',
+          meetDate: '2024-03-02',
+          anniversaries: [{ id: 'an_1', name: '一起看的第一场雪', date: '2024-12-20', calendarType: 'solar', repeatYearly: true }],
+          tags: ['安静'],
+          intro: '喜欢在雨天听歌。',
+          isActive: true,
+          createdAt: t,
+          updatedAt: t,
+        })
+
+        await db.photos.put({
+          id: 'ph_bundle_1',
+          personId: P,
+          blob: realPng(),
+          thumb: realPng(),
+          mime: 'image/png',
+          size: 68,
+          takenAt: t,
+          caption: '火锅',
+          entryId: 'e_bundle_1',
+          tags: [],
+          keepOriginal: false,
+          createdAt: t,
+        })
+
+        await db.entries.put({
+          id: 'e_bundle_1',
+          personId: P,
+          occurredAt: t,
+          type: 'date',
+          title: '一起去吃火锅',
+          content: '排队四十分钟，她说值得。',
+          taSaid: '下次还来',
+          myObservation: '她其实更喜欢清汤',
+          tagList: ['火锅', '冬天'],
+          photoIds: ['ph_bundle_1'],
+          followUp: '下次点鸳鸯锅',
+          followUpDone: false,
+          quick: false,
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.entries.put({
+          id: 'e_bundle_2',
+          personId: P,
+          occurredAt: '2024-12-20T20:00:00.000+08:00',
+          type: 'daily',
+          title: '第一场雪',
+          content: '在小区里站了很久。',
+          tagList: ['雪'],
+          photoIds: [],
+          followUpDone: true,
+          quick: false,
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.entries.put({
+          id: 'e_bundle_3',
+          personId: P,
+          occurredAt: '',
+          type: 'other',
+          title: '没有日期的旧事',
+          content: '记不清哪天。',
+          tagList: [],
+          photoIds: [],
+          followUpDone: false,
+          quick: true,
+          createdAt: t,
+          updatedAt: t,
+        })
+
+        await db.preferences.put({
+          id: 'pr_bundle_1',
+          personId: P,
+          category: 'food',
+          name: '喜欢清汤锅',
+          direction: 'like',
+          note: '辣锅也能吃，但更常点清汤。',
+          tags: ['火锅'],
+          evidenceEntryIds: ['e_bundle_1'],
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.wishes.put({
+          id: 'w_bundle_1',
+          personId: P,
+          content: '想要一台拍立得',
+          raisedAt: '2026-10-01T10:00:00.000+08:00',
+          status: 'wish',
+          entryIds: ['e_bundle_1'],
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.gifts.put({
+          id: 'g_bundle_1',
+          personId: P,
+          name: '围巾',
+          givenAt: '2025-12-24T20:00:00.000+08:00',
+          occasion: '平安夜',
+          feedback: '她当天就戴上了',
+          entryId: 'e_bundle_1',
+          photoIds: [],
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.health.put({
+          id: 'h_bundle_1',
+          personId: P,
+          occurredAt: '2026-10-20T09:00:00.000+08:00',
+          symptom: '偏头痛',
+          severity: 2,
+          status: 'recovered',
+          recovery: '睡了一觉好了',
+          entryIds: ['e_bundle_1'],
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.dailyStatus.put({
+          id: 'd_bundle_1',
+          personId: P,
+          date: '2026-10-24',
+          mood: 'happy',
+          moodLevel: 4,
+          energy: 3,
+          sleepHours: 7.5,
+          goodThing: '吃到了好吃的火锅',
+          worry: '周一要早起',
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.insights.put({
+          id: 'i_bundle_1',
+          personId: P,
+          dimension: '相处偏好',
+          description: '喜欢被提前告知安排，不喜欢临时改计划。',
+          evidenceType: 'repeated',
+          evidenceEntryIds: ['e_bundle_1', 'e_bundle_2'],
+          confirmState: 'confirmed',
+          userEdited: true,
+          createdAt: t,
+          updatedAt: t,
+        })
+        await db.summaries.put({
+          id: 'sm_bundle_1',
+          personId: P,
+          kind: 'month',
+          title: '2026 年 10 月回顾',
+          rangeStart: '2026-10-01',
+          rangeEnd: '2026-10-31',
+          content: '这个月过得比较松弛。',
+          generator: 'manual',
+          aiMeta: { includeHealth: false, includePrivate: false, citedEntryIds: ['e_bundle_1'] },
+          createdAt: t,
+          updatedAt: t,
+        })
+      }
+
+      /* ---------------- 链接校验 ---------------- */
+      function dirOf(file) {
+        const parts = file.split('/')
+        parts.pop()
+        return parts
+      }
+      function resolvePath(fromFile, target) {
+        const base = dirOf(fromFile)
+        const segs = target.split('/')
+        const out = [...base]
+        for (const s of segs) {
+          if (!s || s === '.') continue
+          if (s === '..') out.pop()
+          else out.push(s)
+        }
+        return out.join('/')
+      }
+
+      /** 返回 {targets, missingFiles, missingAnchors, images} */
+      async function validateMarkdown(zip, files) {
+        const mdFiles = files.filter((f) => f.endsWith('.md'))
+        const texts = new Map()
+        for (const f of mdFiles) texts.set(f, await zip.file(f).async('string'))
+        const missingFiles = []
+        const missingAnchors = []
+        const images = []
+        const linkRe = /(!?)\[([^\]]*)\]\(([^)\s]+)\)/g
+        for (const [file, text] of texts) {
+          let m
+          while ((m = linkRe.exec(text))) {
+            const isImage = m[1] === '!'
+            const target = m[3]
+            if (/^(https?:|mailto:|data:)/.test(target)) continue
+            const [path, frag] = target.split('#')
+            const resolved = path ? resolvePath(file, path) : file
+            if (isImage) images.push(resolved)
+            if (!files.includes(resolved)) {
+              missingFiles.push(`${file} → ${target}`)
+              continue
+            }
+            if (frag) {
+              const body = texts.get(resolved)
+              if (!body || !body.includes(`id="${frag}"`)) missingAnchors.push(`${file} → ${target}`)
+            }
+          }
+        }
+        return { missingFiles, missingAnchors, images, mdFiles, texts }
+      }
+
+      async function run() {
+        await wipeAllData()
+        await seed()
+
+        /* 1) 基本结构 */
+        const { zip, manifest, blob } = await createMarkdownBundle()
+        const files = Object.keys(zip.files).filter((f) => !zip.files[f].dir)
+        check(
+          '导出包含入口、目录与机器索引',
+          ['README.md', 'index.md', 'data/index.json'].every((f) => files.includes(f)),
+          files.slice(0, 6).join(' / '),
+        )
+        check(
+          '按年分文件（2024 / 2026 / 无日期）',
+          files.includes('records/2024.md') && files.includes('records/2026.md') && files.includes('records/undated.md'),
+          files.filter((f) => f.startsWith('records/')).join(' '),
+        )
+        check(
+          '档案八类齐全',
+          ['profile', 'preferences', 'wishes', 'gifts', 'health', 'status', 'insights', 'summaries'].every((n) =>
+            files.includes(`archive/${n}.md`),
+          ),
+          files.filter((f) => f.startsWith('archive/')).length + ' 个',
+        )
+        check('媒体按 id 命名', files.includes('media/photos/ph_bundle_1.png'), files.filter((f) => f.startsWith('media/')).join(' '))
+
+        /* 2) 链接与锚点：这是「导出可读、图片能打开、关联可追溯」的真正判据 */
+        const v = await validateMarkdown(zip, files)
+        check('所有相对链接都能在包内找到目标文件', v.missingFiles.length === 0, v.missingFiles.slice(0, 3).join(' | ') || '0 个断链')
+        check('所有带 #锚点 的链接都能在目标文件里找到锚点', v.missingAnchors.length === 0, v.missingAnchors.slice(0, 3).join(' | ') || '0 个断锚')
+        check('图片引用全部指向包内真实文件', v.images.length > 0 && v.images.every((p) => files.includes(p)), `${v.images.length} 处`)
+
+        /* 3) 稳定 ID：锚点必须是数据行 id，不是序号 */
+        const y2026 = v.texts.get('records/2026.md') ?? ''
+        check('记录锚点使用稳定 ID（e_bundle_1）', y2026.includes('<a id="e_bundle_1"></a>'), 'e_bundle_1')
+        check('不含序号式锚点', !/<a id="\d+"><\/a>/.test(y2026), '未出现纯数字锚点')
+
+        /* 4) 关联可追溯：反向关联与引用链接 */
+        check(
+          '记录页能反向看到关联的偏好/心愿/礼物',
+          y2026.includes('archive/preferences.md#pr_bundle_1') &&
+            y2026.includes('archive/wishes.md#w_bundle_1') &&
+            y2026.includes('archive/gifts.md#g_bundle_1'),
+          '偏好/心愿/礼物',
+        )
+        const prefs = v.texts.get('archive/preferences.md') ?? ''
+        check('偏好页回溯到依据记录', prefs.includes('records/2026.md#e_bundle_1'), 'e_bundle_1')
+
+        /* 5) 机器索引与清单一致 */
+        const idx = JSON.parse(await zip.file('data/index.json').async('string'))
+        check(
+          'data/index.json 的 id 与数据库一致',
+          idx.entries?.length === 3 && idx.entries.every((e) => ['e_bundle_1', 'e_bundle_2', 'e_bundle_3'].includes(e.id)),
+          `${idx.entries?.length} 条`,
+        )
+        check('清单标注来源与同步状态', Boolean(manifest.source) && (await zip.file('README.md').async('string')).includes('上次多端同步'), manifest.source.lastSyncedAt ? '有同步时间' : '从未同步')
+
+        /* 6) 回忆录：章节 + 引用链接 */
+        const memoir = await createMemoir(P, { title: '一起过的第一个冬天', subtitle: '2024 年冬', rangeStart: '2024-12-01', rangeEnd: '2024-12-31' })
+        const sec = emptySection({ heading: '第一场雪', body: '那天雪很大。[E1]', entryIds: ['e_bundle_2'], origin: 'ai' })
+        sec.citeMap = { E1: 'e_bundle_2' }
+        await appendSection(memoir.id, sec)
+        const m2 = await getMemoir(memoir.id)
+        check('回忆录可保存章节', Boolean(m2 && m2.sections.length === 1), `${m2?.sections.length} 章`)
+
+        const withMemoir = await createMarkdownBundle()
+        const mfiles = Object.keys(withMemoir.zip.files).filter((f) => !withMemoir.zip.files[f].dir)
+        const mv = await validateMarkdown(withMemoir.zip, mfiles)
+        const memoirDoc = mv.texts.get(`memoirs/${memoir.id}.md`) ?? ''
+        check('回忆录已进包', mfiles.length > files.length && memoirDoc.includes('# 一起过的第一个冬天'), `+${mfiles.length - files.length} 文件`)
+        check(
+          '回忆录里的 [E1] 转成可点击的记录链接',
+          memoirDoc.includes('[E1](../records/2024.md#e_bundle_2)'),
+          memoirDoc.split('\n').find((l) => l.includes('[E1]')) ?? '未找到 [E1]',
+        )
+        check('回忆录章节标注来源与人工修改状态', memoirDoc.includes('AI 草稿'), memoirDoc.includes('已人工修改') ? '已人工修改' : '仅 AI 草稿')
+        check('含回忆录的包仍然 0 断链 0 断锚', mv.missingFiles.length === 0 && mv.missingAnchors.length === 0, `${mv.missingFiles.length}/${mv.missingAnchors.length}`)
+
+        /* 7) 选项：不含照片 / 限时间段 */
+        const noPhotos = await createMarkdownBundle({ includePhotos: false })
+        const npFiles = Object.keys(noPhotos.zip.files).filter((f) => !noPhotos.zip.files[f].dir)
+        const npText = await noPhotos.zip.file('records/2026.md').async('string')
+        check('关掉照片后不留 media 目录', !npFiles.some((f) => f.startsWith('media/')), `${npFiles.length} 文件`)
+        check('关掉照片后图片位置改为文字说明', npText.includes('未随包导出') && !npText.includes('](<'), '文字说明')
+
+        const ranged = await createMarkdownBundle({ range: { start: '2026-01-01', end: '2026-12-31' } })
+        const rFiles = Object.keys(ranged.zip.files).filter((f) => !ranged.zip.files[f].dir)
+        check(
+          '按时间段导出只留范围内的年文件',
+          rFiles.includes('records/2026.md') && !rFiles.includes('records/2024.md'),
+          rFiles.filter((f) => f.startsWith('records/')).join(' '),
+        )
+
+        /* 8) ID 稳定性：换选项重导，锚点不变 */
+        const again = await createMarkdownBundle({ includeArchives: false })
+        const againText = await again.zip.file('records/2026.md').async('string')
+        check('换导出选项后记录锚点不变', againText.includes('<a id="e_bundle_1"></a>'), '同一 ID 仍是锚点')
+
+        /* 9) 回忆录的 AI 覆盖规则 */
+        const locked = await patchSection(memoir.id, sec.id, { body: '我改过的正文' })
+        const lockedSec = locked?.sections.find((s) => s.id === sec.id)
+        check('作者改过的章节被标记锁定', Boolean(lockedSec?.editedAt) && sectionLocked(lockedSec), `editedAt=${Boolean(lockedSec?.editedAt)}`)
+        const refused = await replaceAiSection(memoir.id, sec.id, {
+          text: 'AI 重新生成的内容',
+          citeMap: {},
+          citedEntryIds: [],
+          rejectedIds: [],
+          model: 'test',
+          at: nowISO(),
+          warnings: [],
+        })
+        check('人工改过的章节不会被 AI 覆盖', refused.ok === false && refused.message.includes('改过'), refused.message)
+        const after = await getMemoir(memoir.id)
+        check('拒绝覆盖后正文仍是作者写的', after?.sections[0].body === '我改过的正文', after?.sections[0].body)
+
+        const appended = await appendDraft(
+          memoir.id,
+          { text: '新的一章。[E1]', citeMap: { E1: 'e_bundle_1' }, citedEntryIds: ['e_bundle_1'], rejectedIds: [], model: 'test', at: nowISO(), warnings: [] },
+          '第二章',
+          ['e_bundle_1'],
+        )
+        check('AI 只能作为新章节插入', appended.ok && appended.memoir?.sections.length === 2, `${appended.memoir?.sections.length} 章`)
+        check('AI 章节保留引用映射', appended.memoir?.sections[1].citeMap?.E1 === 'e_bundle_1', 'E1 → e_bundle_1')
+
+        /* 10) 备份 v3 兼容 */
+        const pack = await collectBackupData()
+        check('备份版本升到 v3', BACKUP_VERSION === 3 && pack.manifest.version === 3, `v${pack.manifest.version}`)
+        check('备份包含回忆录', (pack.data.memoirs ?? []).length === 1, `${pack.data.memoirs?.length} 本`)
+        const before = await db.memoirs.count()
+        const v2pack = { ...pack.data, memoirs: undefined }
+        await applyBackupData(v2pack, pack.photoBlobs, 'merge')
+        check('旧包（缺 memoirs 字段）不会清掉本机回忆录', (await db.memoirs.count()) === before, `本机仍有 ${await db.memoirs.count()} 本`)
+
+        /* 11) 删除会进墓碑（换设备不会复活） */
+        await deleteMemoir(memoir.id)
+        await new Promise((r) => setTimeout(r, 30))
+        const tomb = await db.tombstones.get(`memoirs:${memoir.id}`)
+        check('删除回忆录会记墓碑', Boolean(tomb), `memoirs:${memoir.id}`)
+        check('删除后本机不再有这本', (await db.memoirs.count()) === 0, `${await db.memoirs.count()} 本`)
+
+        /* 12) 关闭 AI 也能导出 */
+        const noAi = await createMarkdownBundle()
+        check('不需要 AI 就能生成文稿包', noAi.manifest.counts.entries === 3 && Boolean(noAi.blob.size), `${Math.round((await noAi.blob.size) / 1024)} KB`)
+
+        const failed = checks.filter((c) => !c.pass)
+        window.__bundleselftest = { done: true, total: checks.length, failed: failed.length, checks }
+        out.innerHTML = `<ul>${lines.join('')}</ul><pre>${failed.length ? `失败 ${failed.length} 项` : `全部通过（${checks.length} 项）`}</pre>`
+      }
+
+      run().catch((err) => {
+        window.__bundleselftest = { done: true, fatal: String(err?.stack ?? err), checks }
+        out.innerHTML = `<pre style="color:#a3402f">致命错误：${String(err?.message ?? err)}</pre>`
+      })
+    </script>
+  </body>
+</html>

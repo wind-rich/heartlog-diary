@@ -24,6 +24,7 @@ import { fmtSize } from '../lib/photo'
 import { Field, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../components/ui'
 import { CloudPanel } from '../components/CloudPanel'
 import { BackupHealth } from '../components/BackupHealth'
+import { BundleExportPanel } from '../components/BundleExportPanel'
 import { SyncPanel } from '../components/SyncPanel'
 import { PublishPanel } from '../components/PublishPanel'
 import { useApp } from '../state/app'
@@ -266,6 +267,8 @@ export default function SettingsPage() {
 
       {/* 云服务 */}
       <CloudPanel />
+
+      <BundleExportPanel />
 
       <SyncPanel />
 

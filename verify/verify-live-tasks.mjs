@@ -147,6 +147,11 @@ try {
   notes.push(`访客端：store/db chunk 加载 ${visitorStoreLoads.length}/${visitorDbLoads.length} 个，IndexedDB ${visitorDbCount} 个`)
   if (visitorText.includes('为他记着')) problems.push('线上访客端出现「为他记着」')
   if (visitorText.includes('关页推送')) problems.push('线上访客端出现只有作者端才该有的状态条')
+  // T5：回忆录是作者私有整理稿，访客端连入口都不该有
+  const visitorMemoirLoads = visitorRes.filter((u) => /Memoir-[A-Za-z0-9_-]+\.js/.test(u))
+  if (visitorMemoirLoads.length) problems.push(`线上访客端加载了回忆录 chunk：${visitorMemoirLoads.join(', ')}`)
+  if (visitorText.includes('回忆录')) problems.push('线上访客端出现「回忆录」入口')
+  notes.push(`访客端：回忆录 chunk 加载 ${visitorMemoirLoads.length} 个，页面含「回忆录」=${visitorText.includes('回忆录')}`)
   notes.push(`访客端：待办 chunk 加载 ${visitorTasksLoads.length} 个，页面含「为他记着」=${visitorText.includes('为他记着')}`)
   await cdp.shot('01-visitor.png')
 
@@ -179,6 +184,9 @@ try {
   else {
     notes.push(`author bundle 引用的待办 chunk：${chunkProbe.names.join(', ') || '（未找到）'}`)
     if (!chunkProbe.names.length) problems.push('线上 author bundle 里没有引用任何待办 chunk，说明部署的不是新版本')
+    if (!chunkProbe.names.some((n) => n.startsWith('Memoir-'))) {
+      problems.push('线上 author bundle 里没有回忆录 chunk，说明部署的不是含 T5 的版本')
+    }
     for (const r of chunkProbe.results || []) {
       if (r.status !== 200) problems.push(`待办 chunk ${r.name} 线上取不到（HTTP ${r.status}）`)
     }

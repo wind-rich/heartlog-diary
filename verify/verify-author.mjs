@@ -17,6 +17,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdi
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import JSZip from 'jszip'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -115,6 +116,18 @@ if (!/status: 'offline'/.test(viewerAppSrc)) {
 /* T4 版本历史：每次发布必须留一份可用于回退的 payload */
 if (!/PUBLISH_HISTORY_TABLE/.test(publishSrc) || !/async function rollbackToVersion|export async function rollbackToVersion/.test(publishSrc)) {
   problems.push('发布链路缺少版本历史或回退实现（T4）')
+}
+
+/* T5 回忆录是私有内容：不能进公开快照、不能被发布链路写出去 */
+const publishSrcT5 = publishSrc
+if (/db\.memoirs|memoirReminders|memoirs\b/.test(publishSrcT5)) {
+  problems.push('发布链路（publish.ts）引用了回忆录表，私有内容可能被发布出去')
+}
+if (/\bmemoirs\b/.test(snapshotScript)) {
+  problems.push('公开快照脚本里出现了 memoirs，需确认回忆录没有进入公开包')
+}
+if (/interface PublicMemoir/.test(viewerTypes)) {
+  problems.push('展示端公开契约里出现了回忆录类型，违反私有边界')
 }
 
 /* 待办云写入自检：R-032 的一键验证入口必须存在 */
@@ -358,6 +371,95 @@ try {
   }
   if (!zip) problems.push('未配置 AI 时导出备份失败（没有生成 zip）')
   else notes.push(`导出成功：${zip.name} ${(zip.size / 1024 / 1024).toFixed(1)} MB`)
+
+  /* ---------- 5. T5 文稿包：真实数据导出后解压核对结构与链接 ---------- */
+  const bundleClicked = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('导出文稿包'));
+    btn?.click();
+    return !!btn;
+  })()`)
+  if (!bundleClicked) problems.push('设置页未找到「导出文稿包」按钮')
+
+  let bundlePath = ''
+  for (let i = 0; i < 180; i++) {
+    await sleep(500)
+    const f = readdirSync(downloads).filter((n) => n.startsWith('心意簿-文稿包') && n.endsWith('.zip'))
+    if (f.length) {
+      const p = join(downloads, f[0])
+      if (statSync(p).size > 1024) {
+        bundlePath = p
+        break
+      }
+    }
+  }
+
+  if (!bundlePath) {
+    problems.push('文稿包没有生成（可能是照片过多导致超时）')
+  } else {
+    const z = await JSZip.loadAsync(readFileSync(bundlePath))
+    const names = Object.keys(z.files).filter((n) => !z.files[n].dir)
+    const mdNames = names.filter((n) => n.endsWith('.md'))
+    const texts = new Map()
+    for (const n of mdNames) texts.set(n, await z.file(n).async('string'))
+
+    if (!names.includes('README.md') || !names.includes('index.md') || !names.includes('data/index.json')) {
+      problems.push('文稿包缺少入口文档或机器索引')
+    }
+    const idx = JSON.parse(await z.file('data/index.json').async('string'))
+    if (idx.entries.length !== manifest.counts.entries) {
+      problems.push(`文稿包记录数 ${idx.entries.length}，快照清单为 ${manifest.counts.entries}`)
+    }
+    const mediaCount = names.filter((n) => n.startsWith('media/photos/')).length
+    if (mediaCount !== manifest.counts.photos) {
+      problems.push(`文稿包照片文件 ${mediaCount} 个，快照清单为 ${manifest.counts.photos}`)
+    }
+
+    // 相对链接与锚点：真实数据上同样不能有断链
+    const dirOf = (f) => f.split('/').slice(0, -1)
+    const resolvePath = (from, target) => {
+      const out = dirOf(from)
+      for (const seg of target.split('/')) {
+        if (!seg || seg === '.') continue
+        if (seg === '..') out.pop()
+        else out.push(seg)
+      }
+      return out.join('/')
+    }
+    const missingFiles = []
+    const missingAnchors = []
+    let linkCount = 0
+    for (const [file, text] of texts) {
+      const re = /(!?)\[[^\]]*\]\(([^)\s]+)\)/g
+      let m
+      while ((m = re.exec(text))) {
+        const target = m[2]
+        if (/^(https?:|mailto:|data:)/.test(target)) continue
+        linkCount++
+        const [path, frag] = target.split('#')
+        const resolved = path ? resolvePath(file, path) : file
+        if (!names.includes(resolved)) {
+          missingFiles.push(`${file} → ${target}`)
+          continue
+        }
+        if (frag) {
+          const body = texts.get(resolved)
+          if (!body || !body.includes(`id="${frag}"`)) missingAnchors.push(`${file} → ${target}`)
+        }
+      }
+    }
+    if (missingFiles.length) problems.push(`文稿包有 ${missingFiles.length} 个断链：${missingFiles.slice(0, 2).join(' | ')}`)
+    if (missingAnchors.length) problems.push(`文稿包有 ${missingAnchors.length} 个断锚：${missingAnchors.slice(0, 2).join(' | ')}`)
+
+    if (!problems.length) {
+      notes.push(
+        `文稿包：${names.length} 文件（${mdNames.length} 篇 Markdown / ${mediaCount} 张图 / ${linkCount} 条相对链接全部有效）${(
+          statSync(bundlePath).size /
+          1024 /
+          1024
+        ).toFixed(1)} MB`,
+      )
+    }
+  }
 
   if (cdp.logs.length > logsAfterViewer) problems.push(`作者端控制台错误：${cdp.logs.slice(logsAfterViewer, logsAfterViewer + 2).join(' | ')}`)
 } finally {

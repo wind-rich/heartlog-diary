@@ -23,6 +23,12 @@ import SettingsPage from './pages/Settings'
 const Tasks = lazy(() => import('./viewer/pages/Tasks'))
 
 /**
+ * T5 回忆录页面同样懒加载：它带进 memoir 模块与导出器，
+ * 访客端连路由都不该有，更不该下载这段代码。
+ */
+const Memoir = lazy(() => import('./viewer/pages/Memoir'))
+
+/**
  * 作者端：不再使用旧的「今天/时间线/回顾」界面，
  * 直接套用访客端那套页面（宇宙首页 / 故事 / 相册 / 档案），
  * 数据来自本机 Dexie，页面上额外出现编辑入口。
@@ -79,6 +85,14 @@ function AuthorViewer() {
               element={
                 <Suspense fallback={<Loading text="正在打开「为他记着」…" />}>
                   <Tasks />
+                </Suspense>
+              }
+            />
+            <Route
+              path="memoir"
+              element={
+                <Suspense fallback={<Loading text="正在打开回忆录…" />}>
+                  <Memoir />
                 </Suspense>
               }
             />

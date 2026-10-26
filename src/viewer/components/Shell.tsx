@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
-import { BookHeart, Images, Home, UserRound, Heart, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
+import { BookHeart, BookMarked, Images, Home, UserRound, Heart, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
 import { Suspense } from 'react'
 import { useSnapshotState } from '../state/SnapshotContext'
 import { useSnapshot } from '../state/SnapshotContext'
@@ -21,7 +21,11 @@ const NAV = [
  * 与访客端 NAV 分开维护：待办是私有内容（D-008），
  * 访客端既不显示入口，也没有对应路由。
  */
-const AUTHOR_NAV = [{ to: '/tasks', label: '记着', icon: CalendarCheck, end: false }]
+const AUTHOR_NAV = [
+  { to: '/tasks', label: '记着', icon: CalendarCheck, end: false },
+  // T5：回忆录是作者自己的整理稿，访客端既没有入口也没有路由
+  { to: '/memoir', label: '回忆录', icon: BookMarked, end: false },
+]
 
 function PreviewBar({ onExit }: { onExit: () => void }) {
   const s = useSnapshot()

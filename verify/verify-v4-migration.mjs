@@ -209,9 +209,15 @@ try {
       id: 'tk_v4_probe@1', taskId: 'tk_v4_probe', slotAt: now, slotLocal: '2026-10-26 09:00',
       planIds: ['tr_v4_probe'], createdAt: now, updatedAt: now,
     })
+    // v5（T5 回忆录）同样必须能在老库上直接写
+    await db.memoirs.put({
+      id: 'mb_v5_probe', personId: 'p_v3', title: '升级后新建的回忆录', sections: [],
+      status: 'draft', createdAt: now, updatedAt: now,
+    })
     const tk = await db.tasks.get('tk_v4_probe')
     const tr = await db.taskReminders.get('tr_v4_probe')
     const to = await db.taskOccurrences.get('tk_v4_probe@1')
+    const mb = await db.memoirs.get('mb_v5_probe')
 
     return {
       verno: db.verno,
@@ -225,6 +231,7 @@ try {
       conflict: cf ? cf.payload?.title ?? null : null,
       meta: meta ? meta.value : null,
       newTablesWritable: Boolean(tk && tr && to),
+      memoirWritable: Boolean(mb),
     }
   })().catch((e) => ({ error: String(e && e.stack ? e.stack.split('\\n')[0] : e) }))`)
 
@@ -233,7 +240,7 @@ try {
   if (after?.error) {
     problems.push(`v3→v4 升级失败：${after.error}`)
   } else {
-    if (after.verno !== 4) problems.push(`升级后版本号应为 4，实为 ${after.verno}`)
+    if (after.verno !== 5) problems.push(`升级后版本号应为 5（含 T5 回忆录表），实为 ${after.verno}`)
     if (after.person !== '升级测试人物') problems.push('人物档案在升级后丢失')
     if (!Array.isArray(after.personTags) || after.personTags[0] !== 'v3') problems.push('人物标签在升级后损坏')
     if (after.entry !== 'v3 时代的记录') problems.push('记录在升级后丢失')
@@ -242,8 +249,9 @@ try {
     if (!after.tombstone) problems.push('墓碑表在升级后丢失')
     if (after.conflict !== '被丢弃的旧版本') problems.push('冲突副本在升级后丢失')
     if (after.meta !== true) problems.push('meta 设置在升级后丢失')
-    if (!after.newTablesWritable) problems.push('新增的三张表在升级后不可读写')
-    for (const t of ['tasks', 'taskReminders', 'taskOccurrences']) {
+    if (!after.newTablesWritable) problems.push('新增的三张待办表在升级后不可读写')
+    if (!after.memoirWritable) problems.push('v5 新增的回忆录表在升级后不可读写')
+    for (const t of ['tasks', 'taskReminders', 'taskOccurrences', 'memoirs']) {
       if (!after.tables.includes(t)) problems.push(`升级后缺少表 ${t}`)
     }
     // 原有表一个都不能少
@@ -258,6 +266,12 @@ try {
   await sleep(2500)
   const body = await cdp.text()
   if (!body.includes('为他记着')) problems.push('升级后作者端清单页打不开，可能整页崩溃')
+
+  // 回忆录页在升级后的老库上也能打开（T5）
+  await cdp.send('Page.navigate', { url: `${BASE}/#/memoir` })
+  await sleep(2500)
+  const memoirBody = await cdp.text()
+  if (!memoirBody.includes('回忆录')) problems.push('升级后回忆录页打不开或没有入口')
   if (body.includes('页面出错了') || body.includes('读取本机数据失败')) problems.push('升级后作者端出现错误页')
   await cdp.shot('01-after-v4.png')
 

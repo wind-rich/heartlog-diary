@@ -13,6 +13,7 @@ import type {
   Wish,
 } from '../db/types'
 import type { Task, TaskOccurrence, TaskReminder } from '../tasks/types'
+import type { Memoir } from '../memoir/types'
 import { downloadBlob } from './exporter'
 import { withDeletionsSuppressed } from './tombstones'
 
@@ -23,8 +24,9 @@ import { withDeletionsSuppressed } from './tombstones'
  * v2：T8 新增 tasks / taskReminders / taskOccurrences。
  *     旧包读入时这三项缺失 → 视为空数组，不覆盖已有新任务（大纲 T8-A 要求）。
  *     新包被旧版本应用读取时只会忽略这三个字段，其它内容照常恢复。
+ * v3：T5 新增 memoirs（回忆录）。同样遵循「缺字段视为空数组、不覆盖本机」。
  */
-export const BACKUP_VERSION = 2
+export const BACKUP_VERSION = 3
 export const BACKUP_APP_ID = 'heartlog'
 
 /** data.json 中的照片元信息（不含二进制） */
@@ -46,6 +48,8 @@ export interface BackupData {
   tasks?: Task[]
   taskReminders?: TaskReminder[]
   taskOccurrences?: TaskOccurrence[]
+  /** v3 起：T5 回忆录（同样是私有内容，不进公开快照） */
+  memoirs?: Memoir[]
 }
 
 export interface BackupManifest {
@@ -95,6 +99,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     tasks,
     taskReminders,
     taskOccurrences,
+    memoirs,
   ] = await Promise.all([
     db.persons.toArray(),
     db.preferences.toArray(),
@@ -110,6 +115,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     db.tasks.toArray(),
     db.taskReminders.toArray(),
     db.taskOccurrences.toArray(),
+    db.memoirs.toArray(),
   ])
 
   const photoMetas: PhotoMeta[] = []
@@ -138,6 +144,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     tasks,
     taskReminders,
     taskOccurrences,
+    memoirs,
   }
 
   const manifest: BackupManifest = {
@@ -159,6 +166,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
       tasks: tasks.length,
       taskReminders: taskReminders.length,
       taskOccurrences: taskOccurrences.length,
+      memoirs: memoirs.length,
     },
     note: '这是「心意簿」的完整备份，包含全部文字记录与照片原图。请妥善保管。',
   }
@@ -310,6 +318,8 @@ export async function applyBackupData(
     ['tasks', db.tasks, data.tasks ?? []],
     ['taskReminders', db.taskReminders, data.taskReminders ?? []],
     ['taskOccurrences', db.taskOccurrences, restoredOccurrences(data.taskOccurrences ?? [])],
+    // v3 起的回忆录。旧备份没有这一项时是空数组，等于「不导入」，不会清掉本机文稿。
+    ['memoirs', db.memoirs, data.memoirs ?? []],
   ] as const
 
   const runImport = () =>
@@ -330,6 +340,7 @@ export async function applyBackupData(
       db.tasks,
       db.taskReminders,
       db.taskOccurrences,
+      db.memoirs,
     ],
     async () => {
       if (mode === 'replace') {

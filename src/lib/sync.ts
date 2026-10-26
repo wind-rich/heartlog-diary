@@ -32,6 +32,8 @@ export const SYNC_ENTITIES = [
   'photos',
   'insights',
   'summaries',
+  // T5：回忆录。合并规则与其它业务行一致（updatedAt 较新者胜 + 冲突副本）
+  'memoirs',
 ] as const
 
 export type SyncEntity = (typeof SYNC_ENTITIES)[number]
@@ -89,6 +91,7 @@ function tableOf(entity: string): Table<Record<string, unknown>, string> | null 
     photos: db.photos,
     insights: db.insights,
     summaries: db.summaries,
+    memoirs: db.memoirs,
   }
   return (map[entity] as Table<Record<string, unknown>, string>) ?? null
 }
