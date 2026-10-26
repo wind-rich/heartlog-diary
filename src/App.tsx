@@ -13,6 +13,7 @@ import Stories from './viewer/pages/Stories'
 import Album from './viewer/pages/Album'
 import Archive from './viewer/pages/Archive'
 import RecordDetail from './viewer/pages/RecordDetail'
+import GamePage from './viewer/pages/Game'
 import SettingsPage from './pages/Settings'
 
 /**
@@ -79,6 +80,7 @@ function AuthorViewer() {
             <Route path="stories" element={<Stories />} />
             <Route path="stories/:id" element={<RecordDetail />} />
             <Route path="album" element={<Album />} />
+            <Route path="game" element={<GamePage />} />
             <Route path="archive" element={<Archive />} />
             <Route
               path="tasks"

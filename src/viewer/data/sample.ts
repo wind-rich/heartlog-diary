@@ -509,7 +509,7 @@ function buildDemo(): PublishedSnapshot {
       centerPersonId: 'p_demo',
       tagline: '整个宇宙，都是关于你的记录',
       theme: 'warm-light',
-      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: true },
+      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: true, game: true },
       music: { title: '第 7 部电影的片尾曲', artist: '示例曲目', src: undefined },
     },
     person,

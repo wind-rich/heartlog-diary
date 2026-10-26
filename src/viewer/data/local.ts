@@ -7,7 +7,8 @@
  * 与 `lib/publishedCopy.ts` 方向相反：那边是「快照 → 本机」，这里是「本机 → 快照」。
  * 照片的 blob 会转成 objectURL 供 <img> 使用；这些 URL 随页面生命周期存在，刷新即释放。
  */
-import { db } from '../../db/db'
+import { db, DEFAULT_PREFS, getMeta } from '../../db/db'
+import type { AppPrefs } from '../../db/types'
 import type { PublishedSnapshot, PublicPhoto, PublicEntry } from '../types'
 import { VIEWER_FORMAT_VERSION } from '../types'
 
@@ -39,6 +40,9 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
   const persons = await db.persons.toArray()
   const person = persons.find((p) => p.isActive) ?? persons[0]
   if (!person) return null
+
+  // 展示端配置里的开关（T6 小游戏等）来自作者偏好
+  const prefs = await getMeta<AppPrefs>('prefs', DEFAULT_PREFS)
 
   const [entries, photos, preferences, wishes, gifts, health, insights, summaries, statuses] = await Promise.all([
     db.entries.toArray(),
@@ -114,7 +118,8 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
       tagline: '',
       coverPhotoId: person.avatarPhotoId,
       theme: 'warm-light',
-      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: false },
+      // T6：小游戏开关来自作者偏好；关掉后访客端连入口都不出现
+      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: false, game: prefs.gameEnabled !== false },
     },
     person: {
       id: person.id,

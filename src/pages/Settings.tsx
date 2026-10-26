@@ -329,6 +329,22 @@ export default function SettingsPage() {
         </Field>
       </SectionCard>
 
+      {/* 展示端互动（T6） */}
+      <SectionCard
+        title={
+          <>
+            <Sparkles size={15} className="text-rose-deep" /> 展示端互动
+          </>
+        }
+      >
+        <Switch
+          checked={prefs.gameEnabled !== false}
+          onChange={(v) => savePrefs({ gameEnabled: v })}
+          label="在展示页显示「记忆配对」小游戏"
+          desc="用已发布的照片做成翻牌配对，成绩只存在访客自己的浏览器里，不会写回你的数据。关闭后入口消失。改动需要在「发布到展示端」后才会被访客看到。"
+        />
+      </SectionCard>
+
       {/* 备份与恢复 */}
       <SectionCard
         title={

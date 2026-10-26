@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
-import { BookHeart, BookMarked, Images, Home, UserRound, Heart, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
+import { BookHeart, BookMarked, Images, Home, UserRound, Heart, Puzzle, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
 import { Suspense } from 'react'
 import { useSnapshotState } from '../state/SnapshotContext'
 import { useSnapshot } from '../state/SnapshotContext'
@@ -9,12 +9,25 @@ import { fmtDate, parseAny, fmtTime } from '../../lib/date'
 import { snapshotCounts } from '../lib/data'
 import { TaskBell } from '../author/lazy'
 
-const NAV = [
+type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean }
+
+const NAV: NavItem[] = [
   { to: '/', label: '首页', icon: Home, end: true },
   { to: '/stories', label: '故事', icon: BookHeart },
   { to: '/album', label: '相册', icon: Images },
   { to: '/archive', label: '档案', icon: UserRound },
 ]
+
+/**
+ * T6 小游戏入口：**只有作者在设置里打开、并且这一版快照带 `game: true` 时才出现**。
+ * 老快照没有这个字段 → 不显示，也不用做数据迁移。
+ */
+function navWithGame(gameOn: boolean): NavItem[] {
+  if (!gameOn) return NAV
+  const out = [...NAV]
+  out.splice(3, 0, { to: '/game', label: '互动', icon: Puzzle })
+  return out
+}
 
 /**
  * 作者端独有的「为他记着」入口。
@@ -96,6 +109,8 @@ export function Shell({
 
   const name = s.person.displayName || '未设置称呼'
   const publishedAt = s.manifest.publishedAt
+  const navItems = navWithGame(s.config?.sections?.game === true)
+  const allNav: NavItem[] = editable ? [...navItems, ...AUTHOR_NAV] : navItems
 
   return (
     <div className="flex min-h-full flex-col">
@@ -153,7 +168,7 @@ export function Shell({
           )}
 
           <nav className="hidden items-center gap-1 md:flex">
-            {(editable ? [...NAV, ...AUTHOR_NAV] : NAV).map((n) => (
+            {allNav.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -237,8 +252,15 @@ export function Shell({
       </footer>
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-cream-200 bg-[#FFFCF8]/95 backdrop-blur-md md:hidden">
-        <div className={editable ? 'grid grid-cols-6' : 'grid grid-cols-4'} style={{ paddingBottom: 'var(--safe-bottom)' }}>
-          {(editable ? [...NAV, ...AUTHOR_NAV] : NAV).map((n) => (
+        {/* 列数按实际入口数算：加了小游戏后写死 grid-cols-4/6 会换行错位 */}
+        <div
+          className="grid"
+          style={{
+            paddingBottom: 'var(--safe-bottom)',
+            gridTemplateColumns: `repeat(${(editable ? allNav.length + 1 : allNav.length) || 4}, minmax(0, 1fr))`,
+          }}
+        >
+          {allNav.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}

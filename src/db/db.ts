@@ -146,6 +146,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   moodBlankForMissing: true,
   remindersEnabled: true,
   remindDaysAhead: 7,
+  gameEnabled: true,
 }
 
 export async function getMeta<T>(key: string, fallback: T): Promise<T> {

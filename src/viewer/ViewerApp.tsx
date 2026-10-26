@@ -11,6 +11,7 @@ import Stories from './pages/Stories'
 import Album from './pages/Album'
 import Archive from './pages/Archive'
 import RecordDetail from './pages/RecordDetail'
+import GamePage from './pages/Game'
 
 function readScene(): SnapshotScene {
   const raw = new URLSearchParams(window.location.search).get('scene')
@@ -282,6 +283,8 @@ export default function ViewerApp() {
             <Route path="stories" element={<Stories />} />
             <Route path="stories/:id" element={<RecordDetail />} />
             <Route path="album" element={<Album />} />
+            {/* T6：入口是否显示由快照配置决定，路由本身常备（直接访问也不会 404） */}
+            <Route path="game" element={<GamePage />} />
             <Route path="archive" element={<Archive />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
@@ -298,6 +301,7 @@ export default function ViewerApp() {
           <Route path="stories" element={<Stories />} />
           <Route path="stories/:id" element={<RecordDetail />} />
           <Route path="album" element={<Album />} />
+          <Route path="game" element={<GamePage />} />
           <Route path="archive" element={<Archive />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

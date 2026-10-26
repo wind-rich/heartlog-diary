@@ -215,6 +215,11 @@ export interface ViewerConfig {
     wishes: boolean
     health: boolean
     music: boolean
+    /**
+     * T6 记忆配对。**可选**：老快照没有这个字段时视为关闭。
+     * 这样「加一个互动」不需要给历史快照做迁移，也不会让访客突然多出一个入口。
+     */
+    game?: boolean
   }
   music?: {
     title: string

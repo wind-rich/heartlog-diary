@@ -304,4 +304,6 @@ export interface AppPrefs {
   remindersEnabled: boolean
   /** 纪念日提前提醒天数 */
   remindDaysAhead: number
+  /** T6：展示端是否显示「记忆配对」小游戏 */
+  gameEnabled: boolean
 }
