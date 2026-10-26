@@ -248,14 +248,48 @@ export async function publishToCloud(
     onProgress({ phase: 'photos', done, total: photos.length, label: '上传照片' })
   }
 
-  if (photos.length > 0 && errors.length === photos.length) {
+  /**
+   * 任一照片失败就中止发布。
+   *
+   * 为什么不能「部分失败继续发」：快照里带着全部 104 个 photo_id，
+   * 只要有几张媒体没写进去，公网页就会出现「记录是新的、图是缺的」这种
+   * 不一致状态 —— 访客看到的是破图，而作者以为发成功了。
+   * 媒体缺失比「停在上一版」严重得多：停在上一版只是旧，不一致是坏。
+   *
+   * 照片是原子单位：一张照片的 thumb 与 web 必须都成功，否则整张算失败
+   * （publishOne 内部已是全有或全无，这里只判断照片级结果）。
+   */
+  if (errors.length > 0) {
+    const head = errors.slice(0, 3).join('；')
+    const more = errors.length > 3 ? `…等 ${errors.length} 张` : ''
     throw new PublishError(
-      `全部 ${photos.length} 张照片都没传成功，已中止发布（公网页仍是上一版）。第一张的失败原因：${errors[0]}`,
+      `${errors.length}/${photos.length} 张照片上传失败，已中止发布（公网页仍是上一版，未产生不一致快照）。失败：${head}${more}`,
     )
   }
 
   onProgress({ phase: 'snapshot', done: 0, total: 1, label: '写入快照' })
   const payload = portableSnapshot(snapshot, publishId)
+
+  /**
+   * 混版检查：快照里出现的每个 photo_id，在媒体表里必须 thumb + web 都齐。
+   *
+   * 一道廉价但对账有效的兜底：即使上传阶段因为跳过/指纹比对出现了漏格，
+   * 也不能让「快照引用了没有媒体的照片」这种状态上线。
+   */
+  const need = new Set<string>()
+  for (const p of payload.photos) need.add(String(p.id))
+  const lack: string[] = []
+  for (const id of need) {
+    if (!existing.has(`${id}:thumb`) || !existing.has(`${id}:web`)) lack.push(id)
+  }
+  if (lack.length) {
+    const head = lack.slice(0, 3).join(', ')
+    const more = lack.length > 3 ? ` 等 ${lack.length} 张` : ''
+    throw new PublishError(
+      `快照引用了 ${lack.length} 张没有完整媒体的照片（${head}${more}），已中止发布，避免公网页出现破图。`,
+    )
+  }
+
   const { error: snapErr } = await activeDb.from(PUBLIC_SNAPSHOT_TABLE).upsert(
     {
       publish_id: publishId,

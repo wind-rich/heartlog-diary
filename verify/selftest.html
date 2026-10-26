@@ -229,6 +229,9 @@
         const snapshots = new Map()
         const media = new Map() // `${photo_id}:${kind}` → row
         const calls = { media: 0, snapshot: 0 }
+        // 故障注入：只允许前 N 次媒体写入成功，之后全部报错（用于验证部分失败中止）
+        let failAfter = Infinity
+        let mediaWrites = 0
 
         const builder = (table, state = {}) => {
           const api = {
@@ -236,6 +239,10 @@
               if (table === 'heartlog_public_media') {
                 if (!row.publish_id) return { data: null, error: { message: 'null value in column "publish_id" violates not-null constraint' } }
                 if (!row.data_b64) return { data: null, error: { message: 'null value in column "data_b64"' } }
+                mediaWrites++
+                if (mediaWrites > failAfter) {
+                  return { data: null, error: { message: '模拟网关拒绝：媒体写入失败' } }
+                }
                 media.set(`${row.photo_id}:${row.kind}`, { ...row, owner_id: row.owner_id || 'u_selftest' })
                 calls.media++
               } else {
@@ -257,7 +264,16 @@
           return api
         }
 
-        return { db: { from: (t) => builder(t) }, snapshots, media, calls }
+        return {
+          db: { from: (t) => builder(t) },
+          snapshots,
+          media,
+          calls,
+          resetFailAfter: (n) => {
+            failAfter = n
+            mediaWrites = 0
+          },
+        }
       }
 
       /** 1×1 真 PNG：canvas 能解码，才能测到压缩与上传 */
@@ -299,6 +315,33 @@
         const r2 = await publishToCloud()
         check('重复发布：不重传未变的照片', strict.calls.media === before && r2.photosUploaded === 0, `新增上传 ${strict.calls.media - before} 次`)
         check('重复发布：跳过计数正确', r2.photosSkipped === 4, `skipped=${r2.photosSkipped}`)
+
+        /* 关键回归：部分照片失败时必须中止，不能发布出「记录新、图缺」的快照。
+           旧实现只在「全部失败」时才中止，3/4 失败照样写快照，公网页会破图。
+
+           注意：必须先清空上一轮已写入的媒体，否则指纹比对会全部命中、
+           根本不发起上传，故障注入就成了空转（这个坑实测踩过）。 */
+        strict.media.clear()
+        strict.resetFailAfter(1) // 只让第 1 格成功，其余全失败
+        strict.snapshots.clear()
+        const snapCountBefore = strict.calls.snapshot
+        let partialErr = null
+        try {
+          await publishToCloud()
+        } catch (e) {
+          partialErr = e
+        }
+        check(
+          '部分照片失败时中止发布（不写快照）',
+          Boolean(partialErr) && strict.calls.snapshot === snapCountBefore && strict.snapshots.size === 0,
+          partialErr ? `抛出：${String(partialErr.message).slice(0, 80)}` : `未抛出错误（媒体 ${strict.media.size} 格）`,
+        )
+        check(
+          '中止后没有留下快照（公网页仍是上一版）',
+          strict.snapshots.size === 0,
+          `snapshots=${strict.snapshots.size}`,
+        )
+        strict.resetFailAfter(Infinity)
 
         __setPublishDbForTest(null)
         __skipPublishSessionForTest(false)
