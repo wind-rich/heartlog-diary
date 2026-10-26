@@ -9,8 +9,9 @@
  */
 import { db, DEFAULT_PREFS, getMeta } from '../../db/db'
 import type { AppPrefs } from '../../db/types'
-import type { PublishedSnapshot, PublicPhoto, PublicEntry } from '../types'
+import type { PublishedSnapshot, PublicPhoto, PublicEntry, ViewerGamesConfig } from '../types'
 import { VIEWER_FORMAT_VERSION } from '../types'
+import { GAME_IDS } from '../game/config'
 
 const urls: string[] = []
 
@@ -92,6 +93,14 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
     quick: !!e.quick,
   }))
 
+  const gameEnabled = prefs.gameEnabled !== false
+  const games = Object.fromEntries(
+    GAME_IDS.map((id) => [
+      id,
+      { enabled: id === 'memory' ? prefs.games?.[id]?.enabled ?? gameEnabled : prefs.games?.[id]?.enabled === true },
+    ]),
+  ) as ViewerGamesConfig
+
   const snapshot: PublishedSnapshot = {
     manifest: {
       formatVersion: VIEWER_FORMAT_VERSION,
@@ -118,8 +127,9 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
       tagline: '',
       coverPhotoId: person.avatarPhotoId,
       theme: 'warm-light',
-      // T6：小游戏开关来自作者偏好；关掉后访客端连入口都不出现
-      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: false, game: prefs.gameEnabled !== false },
+      // T6：总开关 + 子玩法白名单；旧字段继续作为记忆配对的总开关兼容
+      sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: false, game: gameEnabled },
+      games,
     },
     person: {
       id: person.id,

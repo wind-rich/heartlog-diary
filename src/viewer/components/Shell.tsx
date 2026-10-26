@@ -2,8 +2,8 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { BookHeart, BookMarked, Images, Home, UserRound, Heart, Puzzle, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
 import { Suspense } from 'react'
-import { useSnapshotState } from '../state/SnapshotContext'
-import { useSnapshot } from '../state/SnapshotContext'
+import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
+import { hasEnabledGames } from '../game/config'
 import { SampleBadge } from './bits'
 import { fmtDate, parseAny, fmtTime } from '../../lib/date'
 import { snapshotCounts } from '../lib/data'
@@ -19,8 +19,8 @@ const NAV: NavItem[] = [
 ]
 
 /**
- * T6 小游戏入口：**只有作者在设置里打开、并且这一版快照带 `game: true` 时才出现**。
- * 老快照没有这个字段 → 不显示，也不用做数据迁移。
+ * T6 互动入口：**只有这一版快照至少启用一个子玩法时才出现**。
+ * 老快照没有子开关时只兼容记忆配对，也不会让访客突然多出新玩法。
  */
 function navWithGame(gameOn: boolean): NavItem[] {
   if (!gameOn) return NAV
@@ -109,7 +109,7 @@ export function Shell({
 
   const name = s.person.displayName || '未设置称呼'
   const publishedAt = s.manifest.publishedAt
-  const navItems = navWithGame(s.config?.sections?.game === true)
+  const navItems = navWithGame(hasEnabledGames(s.config))
   const allNav: NavItem[] = editable ? [...navItems, ...AUTHOR_NAV] : navItems
 
   return (

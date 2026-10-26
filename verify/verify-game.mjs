@@ -1,15 +1,15 @@
 /**
- * T6 记忆配对离线验证。
+ * T6 回忆游乐园离线验证。
  *
  * 用法：node verify/verify-game.mjs（需先 npm run dev）
  *
- * 两段：
- * A. 纯逻辑（`verify/game-selftest.html`）：选牌/洗牌/组牌/成绩；
- * B. 真浏览器（sample 场景，不碰任何真实数据）：入口可见性、翻牌、配对、失配回翻、
- *    重新开始、完整通关、成绩落 localStorage、**不建 IndexedDB、不发写请求**。
+ * 三段：
+ * A. 纯逻辑（verify/game-selftest.html）：开关兼容、配对难度、拼图、猜图、盲盒与本机成绩；
+ * B. 真浏览器（sample 场景，不碰真实数据）：大厅、记忆配对全流程、拼图通关、猜图完成、盲盒打开；
+ * C. 访客边界：不建 IndexedDB、不发写请求，只写 heartlog.game.* / hl-* 本机键。
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -82,22 +82,29 @@ class CDP {
   }
 }
 
-/* ---------------- 静态边界：小游戏代码不得带进数据库 ---------------- */
-const gameSrc = readFileSync(join(ROOT, 'src/viewer/pages/Game.tsx'), 'utf8')
-const memSrc = readFileSync(join(ROOT, 'src/viewer/game/memory.ts'), 'utf8')
-const shellSrc = readFileSync(join(ROOT, 'src/viewer/components/Shell.tsx'), 'utf8')
-for (const [file, src] of [
-  ['Game.tsx', gameSrc],
-  ['memory.ts', memSrc],
-]) {
-  if (/from '\..*\/db\/db'|dexie|from '\..*\/tasks|from '\..*\/memoir|lib\/sync/.test(src)) {
-    problems.push(`${file} 引入了数据库/私有模块，访客端会被迫下载 Dexie`)
-  }
-  if (/fetch\(|XMLHttpRequest|navigator\.sendBeacon/.test(src)) {
-    problems.push(`${file} 里出现了网络写入调用，T6 不允许访客操作上报`)
+/* ---------------- 静态边界：访客小游戏不得带进数据库/私有模块 ---------------- */
+const gameFiles = [join(ROOT, 'src/viewer/pages/Game.tsx'), join(ROOT, 'src/viewer/components/GameShared.tsx')]
+function collect(dir) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    if (statSync(path).isDirectory()) collect(path)
+    else if (/\.(ts|tsx)$/.test(name)) gameFiles.push(path)
   }
 }
-if (!/navWithGame/.test(shellSrc)) problems.push('Shell 没有使用 navWithGame 控制入口可见性')
+collect(join(ROOT, 'src/viewer/game'))
+collect(join(ROOT, 'src/viewer/pages/games'))
+for (const file of gameFiles) {
+  const src = readFileSync(file, 'utf8')
+  const rel = file.slice(ROOT.length + 1).replaceAll('\\', '/')
+  if (/from '\..*\/db\/db'|dexie|from '\..*\/tasks|from '\..*\/memoir|lib\/sync/.test(src)) {
+    problems.push(`${rel} 引入了数据库/私有模块，访客端会被迫下载 Dexie`)
+  }
+  if (/fetch\(|XMLHttpRequest|navigator\.sendBeacon/.test(src)) {
+    problems.push(`${rel} 里出现了网络写入调用，T6 不允许访客操作上报`)
+  }
+}
+const shellSrc = readFileSync(join(ROOT, 'src/viewer/components/Shell.tsx'), 'utf8')
+if (!/navWithGame/.test(shellSrc) || !/hasEnabledGames/.test(shellSrc)) problems.push('Shell 没有使用统一游戏配置控制入口可见性')
 
 const profile = mkdtempSync(join(tmpdir(), 'hl-game-'))
 const chrome = spawn(
@@ -156,20 +163,45 @@ try {
     notes.push(`逻辑自测：${unit.total - unit.failed}/${unit.total} 通过`)
   }
 
-  /* ---------- B. 真浏览器（sample 场景） ---------- */
+  /* ---------- B. 大厅 ---------- */
   await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo` })
   await sleep(2600)
   const navHasGame = await cdp.evaluate(`[...document.querySelectorAll('a')].some(a => a.innerText.trim() === '互动')`)
   if (!navHasGame) problems.push('样例快照里没有「互动」入口（配置未生效）')
-  notes.push(`入口：样例场景可见=${navHasGame}`)
-
   await cdp.evaluate(`(() => {
     const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === '互动');
     link?.click();
     return !!link;
   })()`)
   await sleep(1200)
+  const hall = await cdp.evaluate(`(() => {
+    const text = document.body.innerText;
+    return {
+      title: text.includes('回忆游乐园'),
+      cards: ['记忆配对','拼回这一刻','猜猜是哪一张','今日回忆盲盒'].filter(name => text.includes(name)),
+      random: [...document.querySelectorAll('button')].some(b => b.innerText.includes('随便玩一个')),
+      hash: location.hash,
+    };
+  })()`)
+  if (!hall.title || hall.cards.length !== 4 || !hall.random) problems.push(`互动大厅不完整：${JSON.stringify(hall)}`)
+  notes.push(`大厅：${hall.cards.length}/4 款玩法可见`)
+  await cdp.shot('01-game-hall.png')
 
+  /* ---------- B1. 记忆配对 ---------- */
+  await cdp.evaluate(`(() => {
+    const link = [...document.querySelectorAll('a')].find(a => a.innerText.includes('记忆配对'));
+    link?.click();
+    return !!link;
+  })()`)
+  await sleep(1200)
+  const memorySetup = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('开始配对'));
+    const result = { setup: !!btn, difficulty: [...document.querySelectorAll('button')].filter(b => b.innerText.includes('对')).length };
+    btn?.click();
+    return result;
+  })()`)
+  if (!memorySetup.setup || memorySetup.difficulty < 3) problems.push(`记忆配对设置页不完整：${JSON.stringify(memorySetup)}`)
+  await sleep(900)
   const board = await cdp.evaluate(`(() => {
     const cards = [...document.querySelectorAll('[data-card-key]')];
     return {
@@ -183,8 +215,7 @@ try {
   if (board.count !== 12 || board.pairs !== 6) problems.push(`牌面数量异常：${board.count} 张 / ${board.pairs} 对`)
   if (!board.allHidden) problems.push('开局存在已翻开的牌')
   if (!board.stats) problems.push('步数没有从 0 开始')
-  notes.push(`牌面：${board.count} 张 / ${board.pairs} 对，全部背面，hash=${board.hash}`)
-  await cdp.shot('01-game-board.png')
+  notes.push(`配对：${board.count} 张 / ${board.pairs} 对，hash=${board.hash}`)
 
   const clickPair = async (photoId) => {
     const r = await cdp.evaluate(`(() => {
@@ -195,7 +226,6 @@ try {
     })()`)
     if (!r.ok) return false
     await sleep(160)
-    // 第二下必须点**另一张**背面牌：按 photoId + hidden 找，别把刚翻开的那张再点一次
     await cdp.evaluate(`(() => {
       const cards = [...document.querySelectorAll('[data-card-key]')].filter(c => c.dataset.photoId === ${JSON.stringify(photoId)} && c.dataset.state === 'hidden');
       cards[0]?.click();
@@ -212,53 +242,32 @@ try {
     const mid = cards[1] ? cards[1].dataset.state : null;
     cards[1].click();
     await new Promise(r => setTimeout(r, 600));
-    const matched = document.querySelectorAll('[data-state="matched"]').length;
-    return { mid, matched, text: document.body.innerText.includes('步数 1') };
+    return { mid, matched: document.querySelectorAll('[data-state="matched"]').length, text: document.body.innerText.includes('步数 1') };
   })()`)
   if (matchedOk.matched !== 2) problems.push(`配对成功后应有 2 张牌处于 matched，实际 ${matchedOk.matched}`)
   if (!matchedOk.text) problems.push('配对一次后步数不是 1')
 
-  /* 失配：两张不同照片应当自动翻回，且不增加已配对数量 */
   const mismatch = await cdp.evaluate(`(async () => {
     const cards = [...document.querySelectorAll('[data-card-key]')].filter(c => c.dataset.state === 'hidden');
     const a = cards[0], b = cards.find(c => c.dataset.photoId !== cards[0].dataset.photoId);
     if (!a || !b) return { error: '没有可失配的牌' };
-    a.click();
-    await new Promise(r => setTimeout(r, 200));
-    b.click();
-    await new Promise(r => setTimeout(r, 1200));
-    const flipped = document.querySelectorAll('[data-state="flipped"]').length;
-    const matched = document.querySelectorAll('[data-state="matched"]').length;
-    return { flipped, matched };
+    a.click(); await new Promise(r => setTimeout(r, 200)); b.click(); await new Promise(r => setTimeout(r, 1200));
+    return { flipped: document.querySelectorAll('[data-state="flipped"]').length, matched: document.querySelectorAll('[data-state="matched"]').length };
   })()`)
   if (mismatch.error) problems.push(`失配测试失败：${mismatch.error}`)
   else {
     if (mismatch.flipped !== 0) problems.push(`失配后应全部翻回，仍有 ${mismatch.flipped} 张翻开`)
     if (mismatch.matched !== 2) problems.push(`失配不应改变已配对数量（现为 ${mismatch.matched}）`)
   }
-  notes.push(`配对/失配：matched=${matchedOk.matched}，失配后翻回=${mismatch.flipped === 0}`)
 
-  /* 重新开始 */
   const restart = await cdp.evaluate(`(async () => {
     const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('重新开始'));
-    btn?.click();
-    await new Promise(r => setTimeout(r, 500));
-    return {
-      ok: !!btn,
-      matched: document.querySelectorAll('[data-state="matched"]').length,
-      flipped: document.querySelectorAll('[data-state="flipped"]').length,
-      zero: document.body.innerText.includes('步数 0'),
-      cards: document.querySelectorAll('[data-card-key]').length,
-    };
+    btn?.click(); await new Promise(r => setTimeout(r, 500));
+    return { ok: !!btn, matched: document.querySelectorAll('[data-state="matched"]').length, flipped: document.querySelectorAll('[data-state="flipped"]').length, zero: document.body.innerText.includes('步数 0'), cards: document.querySelectorAll('[data-card-key]').length };
   })()`)
   if (!restart.ok) problems.push('没有「重新开始」按钮')
-  if (restart.matched || restart.flipped || !restart.zero) {
-    problems.push(`重新开始没有完全复位：matched=${restart.matched} flipped=${restart.flipped} 步数归零=${restart.zero}`)
-  }
-  if (restart.cards !== 12) problems.push(`重新开始后牌数变成 ${restart.cards}`)
-  notes.push(`重新开始：复位=${restart.matched === 0 && restart.flipped === 0 && restart.zero}，仍是 ${restart.cards} 张`)
+  if (restart.matched || restart.flipped || !restart.zero || restart.cards !== 12) problems.push(`重新开始没有完全复位：${JSON.stringify(restart)}`)
 
-  /* 完整通关：逐个配对，验证通关提示与本地成绩 */
   const photoIds = await cdp.evaluate(`[...new Set([...document.querySelectorAll('[data-card-key]')].map(c => c.dataset.photoId))]`)
   for (const id of photoIds) {
     await clickPair(id)
@@ -267,54 +276,146 @@ try {
   await sleep(800)
   const finished = await cdp.evaluate(`(() => {
     const text = document.body.innerText;
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.memory.v1.'));
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.memory.v2.'));
     const raw = keys.length ? localStorage.getItem(keys[0]) : null;
-    return {
-      matched: document.querySelectorAll('[data-state="matched"]').length,
-      done: text.includes('全部配对完成') || text.includes('新纪录'),
-      keys,
-      record: raw ? JSON.parse(raw) : null,
-    };
+    return { matched: document.querySelectorAll('[data-state="matched"]').length, done: text.includes('全部配对完成') || text.includes('新纪录'), keys, record: raw ? JSON.parse(raw) : null, photos: document.body.innerText.includes('这一局的照片') };
   })()`)
-  if (finished.matched !== 12) problems.push(`通关后应有 12 张已配对，实际 ${finished.matched}`)
-  if (!finished.done) problems.push('通关后没有显示完成提示')
-  if (!finished.keys.length) problems.push('通关后没有写入本地成绩')
-  else if (!finished.record || typeof finished.record.bestMoves !== 'number' || finished.record.clears < 1) {
-    problems.push(`本地成绩内容异常：${JSON.stringify(finished.record)}`)
-  }
-  notes.push(`通关：${finished.matched}/12，成绩=${JSON.stringify(finished.record)}`)
-  await cdp.shot('02-game-cleared.png')
+  if (finished.matched !== 12 || !finished.done || !finished.keys.length || !finished.photos) problems.push(`记忆配对通关结果异常：${JSON.stringify(finished)}`)
+  await cdp.shot('02-memory-cleared.png')
 
-  /* 每次进入换一组：刷新后照片集合应当变化（样例 17 张里取 6 张，重复概率约 1/12376） */
-  const beforeSet = await cdp.evaluate(
-    `[...new Set([...document.querySelectorAll('[data-card-key]')].map(c => c.dataset.photoId))].sort().join(',')`,
-  )
+  const beforeSet = await cdp.evaluate(`[...new Set([...document.querySelectorAll('[data-card-key]')].map(c => c.dataset.photoId))].sort().join(',')`)
   await cdp.send('Page.reload', { ignoreCache: true })
   await sleep(2600)
+  await cdp.evaluate(`[...document.querySelectorAll('button')].find(b => b.innerText.includes('开始配对'))?.click()`)
+  await sleep(900)
   const afterReload = await cdp.evaluate(`(() => {
     const cards = [...document.querySelectorAll('[data-card-key]')];
-    return {
-      count: cards.length,
-      set: [...new Set(cards.map(c => c.dataset.photoId))].sort().join(','),
-      hash: location.hash,
-    };
+    return { count: cards.length, set: [...new Set(cards.map(c => c.dataset.photoId))].sort().join(','), hash: location.hash };
   })()`)
   if (afterReload.count !== 12) problems.push(`刷新后牌数 ${afterReload.count}，应为 12`)
-  if (afterReload.hash !== '#/game') problems.push(`刷新后跑到了 ${afterReload.hash}，应当仍在互动页`)
+  if (afterReload.hash !== '#/game?play=memory') problems.push(`刷新后跑到了 ${afterReload.hash}，应当仍在记忆配对`)
   if (afterReload.set === beforeSet) problems.push('刷新后仍是同一组照片，没有做到「每次进入换一组」')
-  notes.push(`每次进入换一组：刷新前 ${beforeSet.split(',').length} 张 / 刷新后 ${afterReload.set.split(',').length} 张，是否换组=${afterReload.set !== beforeSet}`)
-  await cdp.shot('03-game-second-visit.png')
+  notes.push('配对：翻牌、失配、重开、通关、刷新换组均通过')
 
-  /* ---------- C. 访客边界：不建库、不发写请求 ---------- */
+  /* ---------- B2. 拼图 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=puzzle` })
+  await sleep(1800)
+  const puzzleSetup = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('开始拼图'));
+    const result = { setup: !!btn, hard: [...document.querySelectorAll('button')].some(b => b.innerText.includes('3 × 3')) };
+    btn?.click();
+    return result;
+  })()`)
+  if (!puzzleSetup.setup || !puzzleSetup.hard) problems.push(`拼图设置页不完整：${JSON.stringify(puzzleSetup)}`)
+  await sleep(1000)
+  const puzzleStart = await cdp.evaluate(`(() => ({
+    cells: [...document.querySelectorAll('[data-puzzle-cell]')].length,
+    solved: document.querySelector('[data-puzzle-board]')?.dataset.puzzleBoard,
+    pieces: [...document.querySelectorAll('[data-puzzle-cell]')].map(c => Number(c.dataset.piece)).join(','),
+  }))()`)
+  if (puzzleStart.cells !== 6 || puzzleStart.solved !== 'playing') problems.push(`拼图开局异常：${JSON.stringify(puzzleStart)}`)
+  await cdp.shot('03-puzzle-playing.png')
+
+  await cdp.evaluate(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    for (let target = 0; target < 6; target++) {
+      let cells = [...document.querySelectorAll('[data-puzzle-cell]')];
+      const holder = cells.find(c => Number(c.dataset.piece) === target);
+      if (!holder) throw new Error('找不到拼块 ' + target);
+      if (Number(holder.dataset.puzzleCell) !== target) {
+        holder.click();
+        await sleep(140);
+        cells = [...document.querySelectorAll('[data-puzzle-cell]')];
+        cells.find(c => Number(c.dataset.puzzleCell) === target)?.click();
+        await sleep(140);
+      }
+    }
+    return document.querySelector('[data-puzzle-board]')?.dataset.puzzleBoard;
+  })()`)
+  await sleep(800)
+  const puzzleDone = await cdp.evaluate(`(() => ({
+    state: document.querySelector('[data-puzzle-board]')?.dataset.puzzleBoard,
+    text: document.body.innerText.includes('这一刻拼完整了') || document.body.innerText.includes('拼完整了，也是新纪录'),
+    keys: Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.puzzle.v1.')),
+  }))()`)
+  if (puzzleDone.state !== 'solved' || !puzzleDone.text || !puzzleDone.keys.length) problems.push(`拼图通关异常：${JSON.stringify(puzzleDone)}`)
+  notes.push(`拼图：点击交换并完整通关，成绩键 ${puzzleDone.keys[0] || '无'}`)
+  await cdp.shot('04-puzzle-cleared.png')
+
+  /* ---------- B3. 局部猜图 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=photoGuess` })
+  await sleep(1800)
+  const guessSetup = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('开始猜图'));
+    const result = { setup: !!btn };
+    btn?.click();
+    return result;
+  })()`)
+  if (!guessSetup.setup) problems.push('猜图没有开始按钮')
+  await sleep(1000)
+  const guessStart = await cdp.evaluate(`(() => {
+    const options = [...document.querySelectorAll('[data-guess-option]')];
+    return { options: options.length, unique: new Set(options.map(o => o.dataset.guessOption)).size, crop: !!document.querySelector('[data-guess-crop]'), hint: [...document.querySelectorAll('button')].some(b => b.innerText.includes('放大线索')), skip: [...document.querySelectorAll('button')].some(b => b.innerText.includes('换一题')) };
+  })()`)
+  if (guessStart.options !== 4 || guessStart.unique !== 4 || !guessStart.crop || !guessStart.hint || !guessStart.skip) problems.push(`猜图开局异常：${JSON.stringify(guessStart)}`)
+  await cdp.shot('05-photo-guess-playing.png')
+
+  for (let i = 0; i < 5; i++) {
+    await cdp.evaluate(`(() => document.querySelector('[data-guess-option]')?.click())()`)
+    await sleep(300)
+    await cdp.evaluate(`(() => {
+      const next = [...document.querySelectorAll('button')].find(b => b.innerText.includes('下一题') || b.innerText.includes('查看结果'));
+      next?.click();
+      return !!next;
+    })()`)
+    await sleep(350)
+  }
+  const guessDone = await cdp.evaluate(`(() => ({
+    text: document.body.innerText.includes('这一局完成了'),
+    keys: Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.photoGuess.v1.')),
+  }))()`)
+  if (!guessDone.text || !guessDone.keys.length) problems.push(`猜图结果异常：${JSON.stringify(guessDone)}`)
+  notes.push('猜图：5 题流程、候选锁定与结果记录通过')
+  await cdp.shot('06-photo-guess-done.png')
+
+  /* ---------- B4. 回忆盲盒 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=memoryBox` })
+  await sleep(1800)
+  const boxOpened = await cdp.evaluate(`(async () => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '直接打开回忆盲盒');
+    btn?.click();
+    await new Promise(r => setTimeout(r, 500));
+    const next = [...document.querySelectorAll('button')].find(b => b.innerText.includes('再来一个'));
+    const first = { opened: document.body.innerText.includes('已打开第 1 /'), image: !!document.querySelector('img'), next: !!next };
+    next?.click();
+    await new Promise(r => setTimeout(r, 300));
+    const secondStar = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '直接打开回忆盲盒');
+    secondStar?.click();
+    await new Promise(r => setTimeout(r, 500));
+    return { ...first, second: document.body.innerText.includes('已打开第 2 /') };
+  })()`)
+  if (!boxOpened.opened || !boxOpened.image || !boxOpened.next || !boxOpened.second) problems.push(`盲盒流程异常：${JSON.stringify(boxOpened)}`)
+  notes.push('盲盒：直接打开与连续不重复抽取通过')
+  await cdp.shot('07-memory-box.png')
+
+  /* ---------- C. 响应式与访客边界 ---------- */
+  for (const size of [{ width: 320, height: 740, mobile: true }, { width: 1440, height: 900, mobile: false }]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { ...size, deviceScaleFactor: size.mobile ? 2 : 1 })
+    await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game` })
+    await sleep(1200)
+    const fit = await cdp.evaluate(`document.documentElement.scrollWidth <= ${size.width} && document.body.innerText.includes('回忆游乐园')`)
+    if (!fit) problems.push(`${size.width}px 宽大厅横向溢出或未渲染`)
+  }
+  notes.push('响应式：320px 与 1440px 大厅无横向溢出')
+
   const dbs = await cdp.evaluate(`(async () => { try { return (await indexedDB.databases()).length } catch { return -1 } })()`)
   if (dbs !== 0) problems.push(`小游戏页面创建了 ${dbs} 个 IndexedDB（应完全不用数据库）`)
   const lsKeys = await cdp.evaluate(`Object.keys(localStorage)`)
-  // 展示端自己会写 `hl-viewer-paused`（暂停动画偏好），不算小游戏越界；
-  // 这里只要求「没有出现业务数据/同步相关的键」
-  const unexpected = lsKeys.filter((k) => !k.startsWith('heartlog.game.memory.v1.') && !k.startsWith('hl-'))
+  const allowed = (k) => k.startsWith('hl-') || /^heartlog\.game\.(memory|puzzle|photoGuess|memoryBox)\.v\d+\./.test(k)
+  const unexpected = lsKeys.filter((k) => !allowed(k))
   if (unexpected.length) problems.push(`localStorage 出现预期之外的键：${unexpected.join(', ')}`)
   if (cdp.writes.length) problems.push(`页面发出了非 GET 请求：${cdp.writes.slice(0, 2).join(' | ')}`)
-  notes.push(`边界：IndexedDB ${dbs} 个，localStorage 仅 ${lsKeys.length} 个游戏键，写请求 ${cdp.writes.length} 个`)
+  notes.push(`边界：IndexedDB ${dbs} 个，localStorage ${lsKeys.length} 个白名单键，写请求 ${cdp.writes.length} 个`)
 
   if (cdp.logs.length) problems.push(`页面报错：${cdp.logs.slice(0, 2).join(' | ')}`)
 
@@ -326,7 +427,7 @@ try {
     for (const p of problems) console.log(`  · ${p}`)
     process.exitCode = 1
   } else {
-    console.log('✓ T6 记忆配对通过：入口可控、翻牌/配对/失配/重开/通关正常，成绩只在本机，不建库不发写请求。')
+    console.log('✓ T6 回忆游乐园通过：大厅、配对升级、拼图、局部猜图、回忆盲盒均可用；成绩只在本机，不建库不发写请求。')
   }
   console.log(`截图：${OUT}`)
 } finally {

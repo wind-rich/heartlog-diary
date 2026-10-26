@@ -510,6 +510,12 @@ function buildDemo(): PublishedSnapshot {
       tagline: '整个宇宙，都是关于你的记录',
       theme: 'warm-light',
       sections: { photos: true, stories: true, archive: true, wishes: true, health: true, music: true, game: true },
+      games: {
+        memory: { enabled: true },
+        puzzle: { enabled: true },
+        photoGuess: { enabled: true },
+        memoryBox: { enabled: true },
+      },
       music: { title: '第 7 部电影的片尾曲', artist: '示例曲目', src: undefined },
     },
     person,

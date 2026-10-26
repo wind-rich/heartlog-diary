@@ -147,6 +147,12 @@ export const DEFAULT_PREFS: AppPrefs = {
   remindersEnabled: true,
   remindDaysAhead: 7,
   gameEnabled: true,
+  games: {
+    memory: { enabled: true },
+    puzzle: { enabled: false },
+    photoGuess: { enabled: false },
+    memoryBox: { enabled: false },
+  },
 }
 
 export async function getMeta<T>(key: string, fallback: T): Promise<T> {

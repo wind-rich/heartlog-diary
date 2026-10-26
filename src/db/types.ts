@@ -6,6 +6,7 @@
  * - 时间统一用字符串保存：日期时间用 ISO（本地时区带偏移由 date-fns 处理），纯日期用 yyyy-MM-dd。
  * - 第一版只服务一个人物，但所有记录都带 personId，数据结构天然支持多人物。
  */
+import type { ViewerGamesConfig } from '../viewer/types'
 
 /** 历法类型：公历 / 农历 */
 export type CalendarType = 'solar' | 'lunar'
@@ -304,6 +305,8 @@ export interface AppPrefs {
   remindersEnabled: boolean
   /** 纪念日提前提醒天数 */
   remindDaysAhead: number
-  /** T6：展示端是否显示「记忆配对」小游戏 */
+  /** T6：展示端互动总开关 */
   gameEnabled: boolean
+  /** T6 第二版子玩法开关；缺省沿用默认，新增玩法默认关闭 */
+  games?: ViewerGamesConfig
 }

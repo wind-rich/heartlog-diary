@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>T6 记忆配对 · 逻辑自测</title>
+    <title>T6 回忆游乐园 · 逻辑自测</title>
     <style>
       body { font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 16px; background: #fffcf8; color: #2d2420; }
       ul { padding-left: 18px; }
@@ -12,7 +12,7 @@
     </style>
   </head>
   <body>
-    <h1 style="font-size: 15px">T6 记忆配对 · 逻辑自测</h1>
+    <h1 style="font-size: 15px">T6 回忆游乐园 · 逻辑自测</h1>
     <div id="out">运行中…</div>
     <script type="module">
       import {
@@ -23,10 +23,15 @@
         minMoves,
         pickPhotos,
         randomSeed,
+        resolveMemoryPairCount,
         saveRecord,
         shuffleWithSeed,
         usablePhotos,
       } from '/src/viewer/game/memory.ts'
+      import { enabledGameIds, hasEnabledGames, isGameEnabled } from '/src/viewer/game/config.ts'
+      import { createPuzzleBoard, hintPuzzle, isPuzzleSolved, loadPuzzleRecord, savePuzzleRecord, swapPuzzlePieces } from '/src/viewer/game/puzzle.ts'
+      import { buildGuessQuestions, distinctGuessPhotos, loadGuessRecord, saveGuessRecord } from '/src/viewer/game/photoGuess.ts'
+      import { buildMemoryBoxQueue, relatedEntryForPhoto } from '/src/viewer/game/memoryBox.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -37,7 +42,6 @@
         out.innerHTML = `<ul>${lines.join('')}</ul>`
       }
 
-      /** 造 n 张「可玩」照片：缩略图用 data URL，避免依赖外部文件 */
       function photos(n) {
         return Array.from({ length: n }, (_, i) => ({
           id: `ph_${i + 1}`,
@@ -53,50 +57,42 @@
           },
         }))
       }
+      const baseSections = { photos: true, stories: true, archive: true, wishes: true, health: true, music: false }
 
       try {
-        /* 1) 开关 */
-        check('开关：老快照没有字段 → 关闭', gameEnabled({ sections: { photos: true } }) === false, 'undefined')
-        check('开关：显式 false → 关闭', gameEnabled({ sections: { game: false } }) === false, 'false')
-        check('开关：显式 true → 打开', gameEnabled({ sections: { game: true } }) === true, 'true')
+        check('开关：老快照没有字段 → 关闭', gameEnabled({ sections: baseSections }) === false, 'undefined')
+        check('开关：显式 false → 关闭', gameEnabled({ sections: { ...baseSections, game: false } }) === false, 'false')
+        check('开关：旧快照显式 true → 仅记忆配对', JSON.stringify(enabledGameIds({ sections: { ...baseSections, game: true } })) === '["memory"]', 'legacy memory')
         check('开关：config 缺失也不报错', gameEnabled(undefined) === false, 'undefined config')
+        const newConfig = { sections: { ...baseSections, game: true }, games: { memory: { enabled: false }, puzzle: { enabled: true }, photoGuess: { enabled: false }, memoryBox: { enabled: true }, unknown: { enabled: true } } }
+        check('子配置存在时按白名单显式开启', JSON.stringify(enabledGameIds(newConfig)) === '["puzzle","memoryBox"]', enabledGameIds(newConfig).join(','))
+        check('新配置可关闭记忆配对', isGameEnabled(newConfig, 'memory') === false, 'memory=false')
+        check('未知玩法被忽略', isGameEnabled(newConfig, 'unknown') === false, 'unknown ignored')
+        check('总开关 false 时子配置不能绕过', enabledGameIds({ sections: { ...baseSections, game: false }, games: { puzzle: { enabled: true } } }).length === 0, 'total=false')
+        check('所有子玩法关闭时大厅不显示', hasEnabledGames({ sections: { ...baseSections, game: true }, games: {} }) === false, 'games={}')
 
-        /* 2) 可用照片筛选 */
         const withEmpty = [...photos(3), { id: 'ph_bad', personId: 'p', mime: 'image/jpeg', size: 1, tags: [], media: { thumb: { key: '', url: '', mime: '', size: 0 }, full: { key: '', url: '', mime: '', size: 0 } } }]
         check('只用带缩略图的照片', usablePhotos(withEmpty).length === 3, `usable=${usablePhotos(withEmpty).length}`)
-
-        /* 3) 选牌稳定性 */
         const pool = photos(10)
         const a = pickPhotos(pool, 'pub_A', 6).map((p) => p.id)
         const b = pickPhotos(pool, 'pub_A', 6).map((p) => p.id)
         check('同一版本选出的照片固定', a.join(',') === b.join(','), a.join(','))
         check('选牌数量正确且不重复', a.length === 6 && new Set(a).size === 6, a.length + ' 张')
         const c = pickPhotos(pool, 'pub_B', 6).map((p) => p.id)
-        check('换一版会换一批（偏移由 publishId 决定）', c.join(',') !== a.join(','), `A=${a[0]} B=${c[0]}`)
-        check('照片不足时按实际数量取', pickPhotos(photos(3), 'pub_A', 6).length === 3, pickPhotos(photos(3), 'pub_A', 6).length + ' 张')
+        check('换一版会换一批', c.join(',') !== a.join(','), `A=${a[0]} B=${c[0]}`)
+        check('照片不足时按实际数量取', pickPhotos(photos(3), 'pub_A', 6).length === 3, '3 张')
         check('没有照片时返回空（不报错）', pickPhotos([], 'pub_A', 6).length === 0, '0 张')
-
-        /* 3.5) 每次进入换一组：带 seed 时选牌由种子决定 */
         const seededSet = (seed) => pickPhotos(pool, 'pub_A', 6, seed).map((p) => p.id).sort().join(',')
         check('同一 seed 选出的照片一致', seededSet('s1') === seededSet('s1'), seededSet('s1'))
         check('不同 seed 选出不同的一组', seededSet('s1') !== seededSet('s2'), `s1=${seededSet('s1')} s2=${seededSet('s2')}`)
-        const seededList = pickPhotos(pool, 'pub_A', 6, 's1').map((p) => p.id)
-        check('带 seed 仍只取 6 张且不重复', seededList.length === 6 && new Set(seededList).size === 6, seededList.join(','))
-        check('不带 seed 与带 seed 的行为可区分（前者按发布版本固定）', pickPhotos(pool, 'pub_A', 6).map((p) => p.id).join(',') === a.join(','), a.join(','))
-
         const rs1 = randomSeed()
         const rs2 = randomSeed()
         check('randomSeed 每次不同且长度稳定', rs1 !== rs2 && rs1.length >= 8, `${rs1.slice(0, 8)} / ${rs2.slice(0, 8)}`)
 
-        /* 4) 洗牌可复现 */
-        const s1 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-1').join(',')
-        const s2 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-1').join(',')
-        const s3 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-2').join(',')
-        check('同一 seed 洗牌顺序一致', s1 === s2, s1)
-        check('不同 seed 顺序不同', s1 !== s3, `s1=${s1} s3=${s3}`)
-        check('洗牌不丢牌（集合相同）', s1.split(',').sort().join(',') === '1,2,3,4,5,6,7,8', s1)
-
-        /* 5) 组牌 */
+        check('配对：挑战 8 对', resolveMemoryPairCount(8, 'challenge') === 8, '8')
+        check('配对：7 张从挑战降为 6 对', resolveMemoryPairCount(7, 'challenge') === 6, '6')
+        check('配对：4 张降为轻松 3 对', resolveMemoryPairCount(4, 'standard') === 3, '3')
+        check('配对：少于 3 张不开局', resolveMemoryPairCount(2, 'easy') === null, 'null')
         const board = buildBoard(pool, 'pub_A', 'r0', 6)
         const counts = {}
         for (const c2 of board.cards) counts[c2.photoId] = (counts[c2.photoId] ?? 0) + 1
@@ -104,44 +100,68 @@
         check('每张照片正好出现两次', Object.values(counts).every((n) => n === 2), JSON.stringify(counts))
         check('每张牌 key 唯一', new Set(board.cards.map((c2) => c2.key)).size === 12, '12 个唯一 key')
         check('牌面带缩略图与无障碍文字', board.cards.every((c2) => c2.thumb && c2.label), board.cards[0].label)
-
         const board2 = buildBoard(pool, 'pub_A', 'r1', 6)
-        check(
-          '重新开始换了顺序（同一批牌）',
-          board2.cards.map((c2) => c2.key).join(',') !== board.cards.map((c2) => c2.key).join(','),
-          '顺序不同',
-        )
+        check('重新开始换了顺序', board2.cards.map((c2) => c2.key).join(',') !== board.cards.map((c2) => c2.key).join(','), '顺序不同')
         check('最少步数等于对数', minMoves(6) === 6, '6')
+        const s1 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-1').join(',')
+        const s2 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-1').join(',')
+        const s3 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-2').join(',')
+        check('同一 seed 洗牌顺序一致', s1 === s2, s1)
+        check('不同 seed 顺序不同', s1 !== s3, `s1=${s1} s3=${s3}`)
 
-        /* 6) 本地成绩：只写 localStorage，按 publishId 隔离 */
         check('fmtDuration 格式化', fmtDuration(65_000) === '1:05' && fmtDuration(5_000) === '0:05', `${fmtDuration(65_000)} / ${fmtDuration(5_000)}`)
-
         localStorage.removeItem('heartlog.game.memory.v1.pub_A')
         localStorage.removeItem('heartlog.game.memory.v1.pub_B')
+        localStorage.removeItem('heartlog.game.memory.v2.pub_A.standard.6')
+        localStorage.removeItem('heartlog.game.memory.v2.pub_A.easy.3')
         check('没有成绩时返回 null', loadRecord('pub_A') === null, 'null')
-
         const first = saveRecord('pub_A', { moves: 10, ms: 30_000, at: '2026-10-26T10:00:00.000Z' })
-        check('第一次通关记为最佳', first.isBest && first.record.bestMoves === 10 && first.record.clears === 1, JSON.stringify(first.record))
-
-        const worse = saveRecord('pub_A', { moves: 12, ms: 20_000, at: '2026-10-26T10:05:00.000Z' })
-        check('步数更多不覆盖最佳', !worse.isBest && worse.record.bestMoves === 10 && worse.record.clears === 2, JSON.stringify(worse.record))
-
+        check('第一次通关记为旧版最佳', first.isBest && first.record.bestMoves === 10 && first.record.clears === 1, JSON.stringify(first.record))
         const better = saveRecord('pub_A', { moves: 8, ms: 40_000, at: '2026-10-26T10:10:00.000Z' })
-        check('步数更少刷新最佳', better.isBest && better.record.bestMoves === 8, JSON.stringify(better.record))
-
-        const sameMoves = saveRecord('pub_A', { moves: 8, ms: 25_000, at: '2026-10-26T10:15:00.000Z' })
-        check('步数相同比用时', sameMoves.isBest && sameMoves.record.bestMs === 25_000, JSON.stringify(sameMoves.record))
-
-        check('成绩按 publishId 隔离', loadRecord('pub_B') === null && loadRecord('pub_A')?.clears === 4, `A=${loadRecord('pub_A')?.clears} B=${loadRecord('pub_B')}`)
-        check(
-          '成绩写在 localStorage，且键名带版本',
-          Boolean(localStorage.getItem('heartlog.game.memory.v1.pub_A')),
-          'heartlog.game.memory.v1.pub_A',
-        )
-
-        /* 7) 数据损坏时不崩 */
+        check('步数更少刷新旧版最佳', better.isBest && better.record.bestMoves === 8, JSON.stringify(better.record))
+        saveRecord('pub_A', { moves: 6, ms: 20_000 }, 'standard', 6)
+        saveRecord('pub_A', { moves: 3, ms: 10_000 }, 'easy', 3)
+        check('新成绩按难度隔离', loadRecord('pub_A', 'standard', 6)?.bestMoves === 6 && loadRecord('pub_A', 'easy', 3)?.bestMoves === 3, 'standard/easy')
+        check('旧版成绩没有被新难度覆盖', loadRecord('pub_A')?.bestMoves === 8 && loadRecord('pub_A')?.clears === 2, JSON.stringify(loadRecord('pub_A')))
+        check('成绩按 publishId 隔离', loadRecord('pub_B') === null, 'pub_B null')
         localStorage.setItem('heartlog.game.memory.v1.pub_broken', '{"oops":1}')
         check('损坏的成绩被忽略而不是抛错', loadRecord('pub_broken') === null, 'null')
+
+        const p1 = createPuzzleBoard(6, 'puzzle-seed')
+        const p2 = createPuzzleBoard(6, 'puzzle-seed')
+        check('拼图：同 seed 可复现', p1.join(',') === p2.join(','), p1.join(','))
+        check('拼图：初始不是已完成', !isPuzzleSolved(p1), p1.join(','))
+        check('拼图：不丢块且任意交换可还原', new Set(p1).size === 6 && isPuzzleSolved([0, 1, 2, 3, 4, 5]), '6 pieces')
+        const swapped = swapPuzzlePieces([1, 0, 2], 0, 1)
+        check('拼图：交换两块', swapped.join(',') === '0,1,2' && isPuzzleSolved(swapped), swapped.join(','))
+        const hinted = hintPuzzle([1, 0, 2])
+        check('拼图：提示至少纠正一块', hinted !== null && isPuzzleSolved(hinted.board), hinted ? hinted.board.join(',') : 'null')
+        localStorage.removeItem('heartlog.game.puzzle.v1.pub_A.easy')
+        const hintedScore = savePuzzleRecord('pub_A', 'easy', { moves: 4, ms: 1000, hints: 1 })
+        const cleanScore = savePuzzleRecord('pub_A', 'easy', { moves: 5, ms: 2000, hints: 0 })
+        check('拼图：提示局不进入无提示最佳', hintedScore.record.bestMoves === null && cleanScore.record.bestMoves === 5, JSON.stringify(cleanScore.record))
+        check('拼图：损坏数据不崩', (localStorage.setItem('heartlog.game.puzzle.v1.pub_bad.easy', 'bad'), loadPuzzleRecord('pub_bad', 'easy') === null), 'null')
+
+        const guessPool = photos(6)
+        const dup = { ...guessPool[1], id: 'ph_dup' }
+        const distinct = distinctGuessPhotos([...guessPool, dup])
+        check('猜图：同媒体候选去重', distinct.length === 6 && !distinct.some((p) => p.id === 'ph_dup'), String(distinct.length))
+        check('猜图：少于 4 张不开局', buildGuessQuestions(photos(3), 'pub_A', 'g1').length === 0, '0')
+        const g1 = buildGuessQuestions(guessPool, 'pub_A', 'g1', 5)
+        const g2 = buildGuessQuestions(guessPool, 'pub_A', 'g1', 5)
+        check('猜图：同 seed 可复现', JSON.stringify(g1) === JSON.stringify(g2), `${g1.length} 题`)
+        check('猜图：每题 4 个候选且答案存在', g1.length === 5 && g1.every((q) => q.optionIds.length === 4 && q.optionIds.includes(q.answerId)), `${g1.length} 题`)
+        check('猜图：候选不重复', g1.every((q) => new Set(q.optionIds).size === 4), 'unique')
+        localStorage.removeItem('heartlog.game.photoGuess.v1.pub_A.5')
+        const guessRecord = saveGuessRecord('pub_A', 5, { correct: 4, assists: 2 })
+        check('猜图：本机成绩按题量保存', guessRecord.bestCorrect === 4 && loadGuessRecord('pub_A', 5)?.clears === 1, JSON.stringify(guessRecord))
+
+        const box1 = buildMemoryBoxQueue(guessPool, 'box-seed')
+        const box2 = buildMemoryBoxQueue(guessPool, 'box-seed')
+        check('盲盒：同 seed 队列可复现', box1.map((p) => p.id).join(',') === box2.map((p) => p.id).join(','), String(box1.length))
+        check('盲盒：一轮不重复', new Set(box1.map((p) => p.id)).size === box1.length, String(box1.length))
+        const entries = [{ id: 'entry_1', occurredAt: '2026-10-02T10:00:00.000+08:00', kind: 'daily', title: '第二张的记录', tags: [], photoIds: ['ph_2'], quick: false }]
+        check('盲盒：可通过 entry.photoIds 反查关联', relatedEntryForPhoto(guessPool[1], entries)?.id === 'entry_1', 'entry_1')
 
         const failed = checks.filter((c) => !c.pass)
         window.__gameselftest = { done: true, total: checks.length, failed: failed.length, checks }

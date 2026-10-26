@@ -11,7 +11,26 @@
  * - **进度只存 localStorage**，键里带 `publishId`，换一版不会串成绩；
  * - 没有上传、没有聊天、没有多人、没有服务端。
  */
-import type { PublicPhoto, ViewerConfig } from '../types'
+import type { PublicPhoto } from '../types'
+
+export { gameEnabled } from './config'
+
+export type MemoryDifficulty = 'easy' | 'standard' | 'challenge'
+
+export const MEMORY_PAIR_COUNTS: Record<MemoryDifficulty, number> = {
+  easy: 3,
+  standard: 6,
+  challenge: 8,
+}
+
+/** 照片不足时只向较低难度降级；少于 3 张返回 null，不用重复照片凑局。 */
+export function resolveMemoryPairCount(available: number, difficulty: MemoryDifficulty): number | null {
+  const target = MEMORY_PAIR_COUNTS[difficulty]
+  if (available >= target) return target
+  if (difficulty === 'challenge' && available >= 6) return 6
+  if (available >= 3) return 3
+  return null
+}
 
 export interface MemoryCard {
   /** 卡面唯一键：`${photoId}#${副本序号}` */
@@ -32,11 +51,6 @@ export interface MemoryRecord {
   bestMs: number
   clears: number
   lastAt: string
-}
-
-/** 模块开关：默认关闭（老快照没有这个字段，就不显示入口） */
-export function gameEnabled(config: ViewerConfig | undefined): boolean {
-  return config?.sections?.game === true
 }
 
 /** 只有带缩略图的照片能当牌面：没有缩略图的牌翻开是一片空白，等于坏体验 */
@@ -147,11 +161,14 @@ export function buildBoard(photos: PublicPhoto[] | undefined, publishId: string,
 /* 本地成绩：只写 localStorage，键按发布版本隔离                          */
 /* ------------------------------------------------------------------ */
 
-const storageKey = (publishId: string) => `heartlog.game.memory.v1.${publishId || 'unknown'}`
+const storageKey = (publishId: string, difficulty?: MemoryDifficulty, pairCount = 6) =>
+  difficulty
+    ? `heartlog.game.memory.v2.${publishId || 'unknown'}.${difficulty}.${pairCount}`
+    : `heartlog.game.memory.v1.${publishId || 'unknown'}`
 
-function readRaw(publishId: string): MemoryRecord | null {
+function readRaw(publishId: string, difficulty?: MemoryDifficulty, pairCount = 6): MemoryRecord | null {
   try {
-    const raw = localStorage.getItem(storageKey(publishId))
+    const raw = localStorage.getItem(storageKey(publishId, difficulty, pairCount))
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<MemoryRecord>
     if (typeof parsed?.bestMoves !== 'number' || typeof parsed?.bestMs !== 'number') return null
@@ -167,8 +184,8 @@ function readRaw(publishId: string): MemoryRecord | null {
   }
 }
 
-export function loadRecord(publishId: string): MemoryRecord | null {
-  return readRaw(publishId)
+export function loadRecord(publishId: string, difficulty?: MemoryDifficulty, pairCount = 6): MemoryRecord | null {
+  return readRaw(publishId, difficulty, pairCount)
 }
 
 /**
@@ -178,8 +195,10 @@ export function loadRecord(publishId: string): MemoryRecord | null {
 export function saveRecord(
   publishId: string,
   result: { moves: number; ms: number; at?: string },
+  difficulty?: MemoryDifficulty,
+  pairCount = 6,
 ): { record: MemoryRecord; isBest: boolean } {
-  const prev = readRaw(publishId)
+  const prev = readRaw(publishId, difficulty, pairCount)
   const at = result.at ?? new Date().toISOString()
   const isBest =
     !prev || result.moves < prev.bestMoves || (result.moves === prev.bestMoves && result.ms < prev.bestMs)
@@ -190,7 +209,7 @@ export function saveRecord(
     lastAt: at,
   }
   try {
-    localStorage.setItem(storageKey(publishId), JSON.stringify(record))
+    localStorage.setItem(storageKey(publishId, difficulty, pairCount), JSON.stringify(record))
   } catch {
     // 写不进去就只在本次会话里显示，不弹错
   }

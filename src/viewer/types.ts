@@ -199,6 +199,18 @@ export interface PublicDailyStatus {
 /* 展示配置（逐字段白名单，不从整个 meta 复制）                          */
 /* ------------------------------------------------------------------ */
 
+export type GameId = 'memory' | 'puzzle' | 'photoGuess' | 'memoryBox'
+
+export interface ViewerGameConfig {
+  enabled: boolean
+}
+
+/**
+ * 子玩法开关是可选扩展：旧快照没有 games 时只兼容原记忆配对。
+ * 只读取已知 GameId，未知键与未知值一律忽略。
+ */
+export type ViewerGamesConfig = Partial<Record<GameId, ViewerGameConfig>>
+
 export interface ViewerConfig {
   /** 中心人物引用 */
   centerPersonId: string
@@ -221,6 +233,8 @@ export interface ViewerConfig {
      */
     game?: boolean
   }
+  /** T6 第二版子开关；存在时仅 enabled=true 的已知玩法开放 */
+  games?: ViewerGamesConfig
   music?: {
     title: string
     artist?: string

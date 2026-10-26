@@ -28,6 +28,8 @@ import { BundleExportPanel } from '../components/BundleExportPanel'
 import { SyncPanel } from '../components/SyncPanel'
 import { PublishPanel } from '../components/PublishPanel'
 import { useApp } from '../state/app'
+import { GAME_IDS, GAME_META } from '../viewer/game/config'
+import type { GameId } from '../viewer/types'
 
 export default function SettingsPage() {
   const nav = useNavigate()
@@ -130,6 +132,17 @@ export default function SettingsPage() {
 
   // tombstones 是同步内部状态，不是用户数据，不在统计里露出
   const totalCounts = db.tables.filter((t) => t.name !== 'tombstones')
+
+  const gameSwitchChecked = (id: GameId) =>
+    id === 'memory' ? prefs.games?.[id]?.enabled ?? prefs.gameEnabled !== false : prefs.games?.[id]?.enabled === true
+
+  const saveGameSwitch = (id: GameId, enabled: boolean) => {
+    savePrefs({
+      games: Object.fromEntries(
+        GAME_IDS.map((gameId) => [gameId, { enabled: gameId === id ? enabled : gameSwitchChecked(gameId) }]),
+      ) as NonNullable<typeof prefs.games>,
+    })
+  }
 
   return (
     <div className="space-y-3 pb-6">
@@ -340,9 +353,25 @@ export default function SettingsPage() {
         <Switch
           checked={prefs.gameEnabled !== false}
           onChange={(v) => savePrefs({ gameEnabled: v })}
-          label="在展示页显示「记忆配对」小游戏"
-          desc="用已发布的照片做成翻牌配对，成绩只存在访客自己的浏览器里，不会写回你的数据。关闭后入口消失。改动需要在「发布到展示端」后才会被访客看到。"
+          label="在展示页开放「回忆游乐园」"
+          desc="总开关关闭时访客端不会出现互动入口，直接地址也不能进入。改动需要在「发布到展示端」后才会被访客看到。"
         />
+        {prefs.gameEnabled !== false && (
+          <div className="mt-2 space-y-1 border-t border-cream-200 pt-2">
+            {GAME_IDS.map((id) => (
+              <Switch
+                key={id}
+                checked={gameSwitchChecked(id)}
+                onChange={(v) => saveGameSwitch(id, v)}
+                label={GAME_META[id].title}
+                desc={`${GAME_META[id].description} 成绩只存在访客自己的浏览器里，不会写回你的数据。`}
+              />
+            ))}
+            <p className="px-1 pb-1 text-[11.5px] leading-relaxed text-ink-400">
+              新增玩法默认关闭；旧版快照没有子开关时仍只显示记忆配对。设置会随完整备份保存与恢复，普通多端同步不会同步这些偏好。
+            </p>
+          </div>
+        )}
       </SectionCard>
 
       {/* 备份与恢复 */}

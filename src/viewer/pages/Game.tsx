@@ -1,247 +1,131 @@
-/**
- * T6 记忆配对页面（访客端 + 作者端共用）。
- *
- * 刻意不依赖任何数据库模块：这个页面会进访客包，
- * 一旦 import 了 Dexie/同步/待办，访客端就会被迫下载数据库代码
- * （`verify-author` 与 `verify-tasks` 都盯着这条边界）。
- */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Heart, RotateCcw, Sparkles, Timer, Trophy } from 'lucide-react'
+import { lazy, Suspense, useMemo } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Image as ImageIcon, Images, Puzzle, Shuffle, Sparkles, Star } from 'lucide-react'
 import { useSnapshot } from '../state/SnapshotContext'
-import {
-  buildBoard,
-  fmtDuration,
-  gameEnabled,
-  loadRecord,
-  randomSeed,
-  saveRecord,
-  type MemoryCard,
-  type MemoryRecord,
-} from '../game/memory'
+import { enabledGameIds, GAME_META, hasEnabledGames, isGameEnabled, isGameId } from '../game/config'
+import { randomSeed, usablePhotos } from '../game/memory'
+import type { GameId } from '../types'
+
+const MemoryGame = lazy(() => import('./games/MemoryGame'))
+const PuzzleGame = lazy(() => import('./games/PuzzleGame'))
+const PhotoGuessGame = lazy(() => import('./games/PhotoGuessGame'))
+const MemoryBoxGame = lazy(() => import('./games/MemoryBoxGame'))
+
+const GAME_COMPONENTS: Record<GameId, typeof MemoryGame> = {
+  memory: MemoryGame,
+  puzzle: PuzzleGame,
+  photoGuess: PhotoGuessGame,
+  memoryBox: MemoryBoxGame,
+}
+
+const GAME_ICONS: Record<GameId, typeof Puzzle> = {
+  memory: Images,
+  puzzle: Puzzle,
+  photoGuess: ImageIcon,
+  memoryBox: Star,
+}
+
+function LoadingGame() {
+  return <div className="mx-auto max-w-[560px] rounded-2xl border border-cream-200 bg-white/70 px-4 py-10 text-center text-[12px] text-ink-400">正在打开玩法…</div>
+}
+
+function GameDisabled({ reason, canGoHall }: { reason: string; canGoHall: boolean }) {
+  return (
+    <div className="mx-auto max-w-[520px] py-16 text-center">
+      <Sparkles size={22} className="mx-auto text-rose-soft" />
+      <p className="mt-3 text-[14px] text-ink-700">这个互动没有开启</p>
+      <p className="mt-1 text-[12px] leading-relaxed text-ink-400">{reason}</p>
+      <Link to={canGoHall ? '/game' : '/'} className="btn-ghost mt-4 inline-flex min-h-11 items-center px-3 text-[12.5px]">
+        {canGoHall ? '返回互动大厅' : '回到首页'}
+      </Link>
+    </div>
+  )
+}
 
 export default function GamePage() {
   const snapshot = useSnapshot()
-  const publishId = snapshot.manifest?.publishId ?? ''
-  const enabled = gameEnabled(snapshot.config)
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const enabled = enabledGameIds(snapshot.config)
+  const photoCount = usablePhotos(snapshot.photos).length
+  const requested = searchParams.get('play')
 
-  /**
-   * 每次进入页面生成一个新种子：同一版发布里，每一局换一组照片。
-   * 「重新开始」也会换种子，所以重开既换顺序、也换照片。
-   */
-  const [seed, setSeed] = useState(() => randomSeed())
-  const [round, setRound] = useState(0)
-  const [flipped, setFlipped] = useState<string[]>([])
-  const [matched, setMatched] = useState<string[]>([])
-  const [moves, setMoves] = useState(0)
-  const [startedAt, setStartedAt] = useState(0)
-  const [now, setNow] = useState(0)
-  const [done, setDone] = useState(false)
-  const [record, setRecord] = useState<MemoryRecord | null>(null)
-  const [isBest, setIsBest] = useState(false)
-  const lock = useRef(false)
-
-  const board = useMemo(
-    () => buildBoard(snapshot.photos, publishId, `r${round}-${seed}`),
-    [snapshot.photos, publishId, round, seed],
+  const playable = useMemo(
+    () => enabled.filter((id) => photoCount >= GAME_META[id].minPhotos),
+    [enabled, photoCount],
   )
 
-  useEffect(() => {
-    setRecord(loadRecord(publishId))
-  }, [publishId])
-
-  useEffect(() => {
-    if (!startedAt || done) return
-    const t = window.setInterval(() => setNow(Date.now()), 500)
-    return () => window.clearInterval(t)
-  }, [startedAt, done])
-
-  const restart = useCallback(() => {
-    setSeed(randomSeed())
-    setRound((r) => r + 1)
-    setFlipped([])
-    setMatched([])
-    setMoves(0)
-    setStartedAt(0)
-    setNow(0)
-    setDone(false)
-    setIsBest(false)
-    lock.current = false
-  }, [])
-
-  const finish = useCallback(
-    (ms: number, usedMoves: number) => {
-      setDone(true)
-      const res = saveRecord(publishId, { moves: usedMoves, ms })
-      setRecord(res.record)
-      setIsBest(res.isBest)
-    },
-    [publishId],
-  )
-
-  const onFlip = useCallback(
-    (card: MemoryCard) => {
-      if (done || lock.current) return
-      if (matched.includes(card.photoId)) return
-      if (flipped.includes(card.key)) return
-      const started = startedAt || Date.now()
-      if (!startedAt) {
-        setStartedAt(started)
-        setNow(started)
-      }
-      const next = [...flipped, card.key]
-      setFlipped(next)
-      if (next.length < 2) return
-
-      const [a, b] = next.map((k) => board.cards.find((c) => c.key === k)).filter(Boolean) as MemoryCard[]
-      const usedMoves = moves + 1
-      setMoves(usedMoves)
-
-      if (a?.photoId === b?.photoId) {
-        lock.current = true
-        window.setTimeout(() => {
-          const nextMatched = [...new Set([...matched, a.photoId])]
-          setMatched(nextMatched)
-          setFlipped([])
-          lock.current = false
-          if (nextMatched.length === board.pairCount) finish(Date.now() - started, usedMoves)
-        }, 260)
-      } else {
-        lock.current = true
-        window.setTimeout(() => {
-          setFlipped([])
-          lock.current = false
-        }, 720)
-      }
-    },
-    [board, done, finish, flipped, matched, moves, startedAt],
-  )
-
-  if (!enabled) {
-    return (
-      <div className="mx-auto max-w-[520px] py-16 text-center">
-        <Sparkles size={22} className="mx-auto text-rose-soft" />
-        <p className="mt-3 text-[14px] text-ink-700">这个互动没有开启</p>
-        <p className="mt-1 text-[12px] text-ink-400">作者可以在设置里打开「展示端小游戏」。</p>
-        <Link to="/" className="btn-ghost mt-4 inline-flex px-3 py-1.5 text-[12.5px]">
-          回到首页
-        </Link>
-      </div>
-    )
+  if (requested && isGameId(requested)) {
+    if (!isGameEnabled(snapshot.config, requested)) {
+      return <GameDisabled reason="作者没有在这一版发布中开启它；旧版快照也不会因为升级而自动开放新玩法。" canGoHall={enabled.length > 0} />
+    }
+    const Component = GAME_COMPONENTS[requested]
+    return <Suspense fallback={<LoadingGame />}><Component /></Suspense>
   }
 
-  if (board.pairCount < 2) {
-    return (
-      <div className="mx-auto max-w-[520px] py-16 text-center">
-        <Heart size={22} className="mx-auto text-rose-soft" />
-        <p className="mt-3 text-[14px] text-ink-700">照片还不够玩</p>
-        <p className="mt-1 text-[12px] text-ink-400">至少需要 2 张带缩略图的照片。</p>
-        <Link to="/album" className="btn-ghost mt-4 inline-flex px-3 py-1.5 text-[12.5px]">
-          去看相册
-        </Link>
-      </div>
-    )
+  if (!hasEnabledGames(snapshot.config)) {
+    return <GameDisabled reason="作者可以在设置里选择要开放的互动，并重新发布到展示端。" canGoHall={false} />
   }
 
-  const elapsed = startedAt ? (done ? now - startedAt : (now || Date.now()) - startedAt) : 0
+  const pickRandom = () => {
+    if (!playable.length) return
+    const id = playable[parseInt(randomSeed().slice(0, 8), 16) % playable.length]
+    navigate(`/game?play=${id}`)
+  }
 
   return (
-    <div className="mx-auto max-w-[560px] pb-6">
+    <div className="mx-auto max-w-[760px] space-y-5 pb-6">
       <header className="text-center">
-        <h1 className="text-[18px] font-semibold text-ink-900">记忆配对</h1>
-        <p className="mx-auto mt-1 max-w-[400px] text-[12px] leading-relaxed text-ink-500">
-          翻开两张，是同一张照片就留下。一共 {board.pairCount} 对，全部配对成功即通关；
-          <span className="text-ink-400">每次进来会换一组照片，成绩只存在这台设备的浏览器里。</span>
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-soft/15 text-rose-deep">
+          <Sparkles size={22} />
+        </div>
+        <h1 className="mt-3 text-[20px] font-semibold text-ink-900">回忆游乐园</h1>
+        <p className="mx-auto mt-1 max-w-[480px] text-[12px] leading-relaxed text-ink-500">
+          用已经公开的照片玩一点轻松的小互动。成绩只存在这台设备；中途退出只会丢掉本局进度。
         </p>
+        <button
+          type="button"
+          onClick={pickRandom}
+          disabled={!playable.length}
+          className="btn-primary mt-4 inline-flex min-h-11 items-center gap-2 px-4 text-[13px] disabled:opacity-40"
+        >
+          <Shuffle size={15} /> 随便玩一个
+        </button>
       </header>
 
-      <div className="mt-3 flex items-center justify-center gap-3 text-[12px] text-ink-600">
-        <span className="inline-flex items-center gap-1">
-          <Sparkles size={12} className="text-rose-deep" /> 步数 {moves}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Timer size={12} className="text-rose-deep" /> {fmtDuration(elapsed)}
-        </span>
-        <span className="inline-flex items-center gap-1 text-ink-500">
-          <Trophy size={12} className="text-[#C9A227]" />
-          {record ? `最佳 ${record.bestMoves} 步 / ${fmtDuration(record.bestMs)}` : '还没有成绩'}
-        </span>
-      </div>
+      {!playable.length && (
+        <div className="rounded-2xl border border-dashed border-cream-300 bg-white/60 px-4 py-8 text-center">
+          <p className="text-[13px] font-medium text-ink-700">暂时还没有可玩的内容</p>
+          <p className="mt-1 text-[12px] text-ink-500">已开启的玩法素材不足；可以先去相册或故事页看看。</p>
+        </div>
+      )}
 
-      <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-2.5 md:grid-cols-4">
-        {board.cards.map((card) => {
-          const isMatched = matched.includes(card.photoId)
-          const isFlipped = flipped.includes(card.key) || isMatched
-          return (
-            <button
-              key={card.key}
-              type="button"
-              onClick={() => onFlip(card)}
-              data-card-key={card.key}
-              data-photo-id={card.photoId}
-              data-state={isMatched ? 'matched' : isFlipped ? 'flipped' : 'hidden'}
-              aria-label={isFlipped ? `照片：${card.label}` : '未翻开的卡片'}
-              aria-pressed={isFlipped}
-              className={`relative aspect-square overflow-hidden rounded-xl border transition ${
-                isMatched
-                  ? 'border-[#CFE0C6] bg-[#F2F7EF] opacity-95'
-                  : isFlipped
-                    ? 'border-rose-soft/60 bg-white'
-                    : 'border-cream-200 bg-[#FFF3EC] hover:bg-[#FFEDE1]'
-              }`}
-              style={{ touchAction: 'manipulation' }}
-            >
-              {isFlipped ? (
-                <img
-                  src={card.thumb}
-                  alt={card.label}
-                  loading="lazy"
-                  draggable={false}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span className="flex h-full w-full items-center justify-center">
-                  <Heart size={18} className="text-rose-soft" fill="currentColor" />
-                </span>
-              )}
-              {isMatched && (
-                <span className="absolute right-1 top-1 rounded-full bg-white/85 px-1.5 py-0.5 text-[10px] text-[#4F6B45]">
-                  配对
-                </span>
-              )}
-            </button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {enabled.map((id) => {
+          const meta = GAME_META[id]
+          const Icon = GAME_ICONS[id]
+          const enough = photoCount >= meta.minPhotos
+          const card = (
+            <article className={`h-full rounded-2xl border p-4 transition ${enough ? 'border-cream-200 bg-white/80 hover:border-rose-soft/60 hover:shadow-sm' : 'border-dashed border-cream-300 bg-white/50'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-soft/15 text-rose-deep"><Icon size={19} /></div>
+                <span className={`rounded-full px-2 py-0.5 text-[10.5px] ${enough ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{enough ? '可玩' : '素材不足'}</span>
+              </div>
+              <h2 className="mt-3 text-[15px] font-semibold text-ink-900">{meta.title}</h2>
+              <p className="mt-1 min-h-[36px] text-[12px] leading-relaxed text-ink-500">{meta.description}</p>
+              <div className="mt-3 flex items-center justify-between text-[11px] text-ink-400">
+                <span>{meta.duration}</span>
+                <span>{enough ? `需要 ${meta.minPhotos} 张照片` : `当前 ${photoCount} / 需要 ${meta.minPhotos}`}</span>
+              </div>
+            </article>
+          )
+          return enough ? (
+            <Link key={id} to={`/game?play=${id}`} className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-deep">{card}</Link>
+          ) : (
+            <div key={id} aria-disabled="true" className="cursor-not-allowed">{card}</div>
           )
         })}
       </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={restart}
-          className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px]"
-        >
-          <RotateCcw size={13} /> 重新开始
-        </button>
-        {record && <span className="text-[11.5px] text-ink-400">已通关 {record.clears} 次</span>}
-      </div>
-
-      {done && (
-        <div className="mt-4 rounded-2xl border border-[#CFE0C6] bg-[#F2F7EF] px-4 py-3 text-center">
-          <p className="text-[14px] font-medium text-[#3F5F3A]">
-            {isBest ? '新纪录！' : '全部配对完成'}
-          </p>
-          <p className="mt-1 text-[12px] text-[#4F6B45]">
-            {moves} 步 · {fmtDuration(elapsed)}
-            {record && !isBest ? ` · 最佳仍是 ${record.bestMoves} 步` : ''}
-          </p>
-          <p className="mt-1 text-[11.5px] text-[#6C8567]">
-            这里的成绩只保存在本机浏览器，不会写到作者的数据里，也不影响展示内容。
-          </p>
-          <button type="button" onClick={restart} className="btn-primary mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px]">
-            <RotateCcw size={13} /> 再玩一次
-          </button>
-        </div>
-      )}
     </div>
   )
 }
