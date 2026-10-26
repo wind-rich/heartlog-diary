@@ -22,6 +22,7 @@
         loadRecord,
         minMoves,
         pickPhotos,
+        randomSeed,
         saveRecord,
         shuffleWithSeed,
         usablePhotos,
@@ -74,6 +75,18 @@
         check('换一版会换一批（偏移由 publishId 决定）', c.join(',') !== a.join(','), `A=${a[0]} B=${c[0]}`)
         check('照片不足时按实际数量取', pickPhotos(photos(3), 'pub_A', 6).length === 3, pickPhotos(photos(3), 'pub_A', 6).length + ' 张')
         check('没有照片时返回空（不报错）', pickPhotos([], 'pub_A', 6).length === 0, '0 张')
+
+        /* 3.5) 每次进入换一组：带 seed 时选牌由种子决定 */
+        const seededSet = (seed) => pickPhotos(pool, 'pub_A', 6, seed).map((p) => p.id).sort().join(',')
+        check('同一 seed 选出的照片一致', seededSet('s1') === seededSet('s1'), seededSet('s1'))
+        check('不同 seed 选出不同的一组', seededSet('s1') !== seededSet('s2'), `s1=${seededSet('s1')} s2=${seededSet('s2')}`)
+        const seededList = pickPhotos(pool, 'pub_A', 6, 's1').map((p) => p.id)
+        check('带 seed 仍只取 6 张且不重复', seededList.length === 6 && new Set(seededList).size === 6, seededList.join(','))
+        check('不带 seed 与带 seed 的行为可区分（前者按发布版本固定）', pickPhotos(pool, 'pub_A', 6).map((p) => p.id).join(',') === a.join(','), a.join(','))
+
+        const rs1 = randomSeed()
+        const rs2 = randomSeed()
+        check('randomSeed 每次不同且长度稳定', rs1 !== rs2 && rs1.length >= 8, `${rs1.slice(0, 8)} / ${rs2.slice(0, 8)}`)
 
         /* 4) 洗牌可复现 */
         const s1 = shuffleWithSeed([1, 2, 3, 4, 5, 6, 7, 8], 'seed-1').join(',')

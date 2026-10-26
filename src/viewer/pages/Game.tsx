@@ -9,13 +9,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Heart, RotateCcw, Sparkles, Timer, Trophy } from 'lucide-react'
 import { useSnapshot } from '../state/SnapshotContext'
-import { buildBoard, fmtDuration, gameEnabled, loadRecord, saveRecord, type MemoryCard, type MemoryRecord } from '../game/memory'
+import {
+  buildBoard,
+  fmtDuration,
+  gameEnabled,
+  loadRecord,
+  randomSeed,
+  saveRecord,
+  type MemoryCard,
+  type MemoryRecord,
+} from '../game/memory'
 
 export default function GamePage() {
   const snapshot = useSnapshot()
   const publishId = snapshot.manifest?.publishId ?? ''
   const enabled = gameEnabled(snapshot.config)
 
+  /**
+   * 每次进入页面生成一个新种子：同一版发布里，每一局换一组照片。
+   * 「重新开始」也会换种子，所以重开既换顺序、也换照片。
+   */
+  const [seed, setSeed] = useState(() => randomSeed())
   const [round, setRound] = useState(0)
   const [flipped, setFlipped] = useState<string[]>([])
   const [matched, setMatched] = useState<string[]>([])
@@ -28,8 +42,8 @@ export default function GamePage() {
   const lock = useRef(false)
 
   const board = useMemo(
-    () => buildBoard(snapshot.photos, publishId, `r${round}`),
-    [snapshot.photos, publishId, round],
+    () => buildBoard(snapshot.photos, publishId, `r${round}-${seed}`),
+    [snapshot.photos, publishId, round, seed],
   )
 
   useEffect(() => {
@@ -43,6 +57,7 @@ export default function GamePage() {
   }, [startedAt, done])
 
   const restart = useCallback(() => {
+    setSeed(randomSeed())
     setRound((r) => r + 1)
     setFlipped([])
     setMatched([])
@@ -135,8 +150,8 @@ export default function GamePage() {
       <header className="text-center">
         <h1 className="text-[18px] font-semibold text-ink-900">记忆配对</h1>
         <p className="mx-auto mt-1 max-w-[400px] text-[12px] leading-relaxed text-ink-500">
-          翻开两张，是同一张照片就留下。一共 {board.pairCount} 对，全部配对成功即通关。
-          <span className="text-ink-400">成绩只存在这台设备的浏览器里。</span>
+          翻开两张，是同一张照片就留下。一共 {board.pairCount} 对，全部配对成功即通关；
+          <span className="text-ink-400">每次进来会换一组照片，成绩只存在这台设备的浏览器里。</span>
         </p>
       </header>
 

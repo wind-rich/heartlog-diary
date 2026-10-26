@@ -80,12 +80,38 @@ export function shuffleWithSeed<T>(list: T[], seed: string): T[] {
 }
 
 /**
- * 选牌：按拍摄时间倒序（最近的先出现），以一个由 `publishId` 决定的偏移取一段。
+ * 生成一个一次性种子：每次进入页面、每次「重新开始」都用新的。
  *
- * 偏移由内容版本决定，而不是随机：同一次发布里反复进入看到的是同一组照片，
- * 作者重新发布后才会换一批——这比"每次随机"更不像抽奖。
+ * 用 `crypto.getRandomValues` 而不是 `Math.random`，是为了避免同一毫秒内
+ * 两次进入拿到同一个种子（连续点击「重新开始」时很容易发生）。
  */
-export function pickPhotos(photos: PublicPhoto[] | undefined, publishId: string, count = 6): PublicPhoto[] {
+export function randomSeed(): string {
+  try {
+    const buf = new Uint8Array(8)
+    crypto.getRandomValues(buf)
+    return Array.from(buf)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  } catch {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+  }
+}
+
+/**
+ * 选牌：按拍摄时间倒序（最近的先出现），从一个偏移处连续取 `count` 张。
+ *
+ * 偏移由两样东西决定：
+ * - 传了 `seed`（产品默认）：每次进入/重开都是新种子 → 每次换一组，照片多时不会总看那几张；
+ * - 不传 `seed`：只按 `publishId` 算 → 同一次发布内固定一组（自测与排查需要这种确定性）。
+ *
+ * 无论哪种，都只从**已发布且带缩略图**的照片里取，访客不会看到未发布内容。
+ */
+export function pickPhotos(
+  photos: PublicPhoto[] | undefined,
+  publishId: string,
+  count = 6,
+  seed = '',
+): PublicPhoto[] {
   const usable = usablePhotos(photos)
   if (!usable.length) return []
   const sorted = [...usable].sort((a, b) => {
@@ -95,14 +121,14 @@ export function pickPhotos(photos: PublicPhoto[] | undefined, publishId: string,
     return at < bt ? 1 : -1
   })
   const take = Math.min(count, sorted.length)
-  const offset = hashString(publishId || 'seed') % sorted.length
+  const offset = hashString(seed ? `${publishId}|${seed}` : publishId || 'seed') % sorted.length
   const rotated = [...sorted.slice(offset), ...sorted.slice(0, offset)]
   return rotated.slice(0, take)
 }
 
 /** 组牌：每张照片两张，洗牌后返回；同一张照片的两张牌只在 key 上不同 */
 export function buildBoard(photos: PublicPhoto[] | undefined, publishId: string, seed: string, count = 6): MemoryBoard {
-  const picked = pickPhotos(photos, publishId, count)
+  const picked = pickPhotos(photos, publishId, count, seed)
   const cards: MemoryCard[] = []
   picked.forEach((p, i) => {
     for (let copy = 0; copy < 2; copy++) {

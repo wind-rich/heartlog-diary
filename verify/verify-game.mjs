@@ -285,6 +285,26 @@ try {
   notes.push(`通关：${finished.matched}/12，成绩=${JSON.stringify(finished.record)}`)
   await cdp.shot('02-game-cleared.png')
 
+  /* 每次进入换一组：刷新后照片集合应当变化（样例 17 张里取 6 张，重复概率约 1/12376） */
+  const beforeSet = await cdp.evaluate(
+    `[...new Set([...document.querySelectorAll('[data-card-key]')].map(c => c.dataset.photoId))].sort().join(',')`,
+  )
+  await cdp.send('Page.reload', { ignoreCache: true })
+  await sleep(2600)
+  const afterReload = await cdp.evaluate(`(() => {
+    const cards = [...document.querySelectorAll('[data-card-key]')];
+    return {
+      count: cards.length,
+      set: [...new Set(cards.map(c => c.dataset.photoId))].sort().join(','),
+      hash: location.hash,
+    };
+  })()`)
+  if (afterReload.count !== 12) problems.push(`刷新后牌数 ${afterReload.count}，应为 12`)
+  if (afterReload.hash !== '#/game') problems.push(`刷新后跑到了 ${afterReload.hash}，应当仍在互动页`)
+  if (afterReload.set === beforeSet) problems.push('刷新后仍是同一组照片，没有做到「每次进入换一组」')
+  notes.push(`每次进入换一组：刷新前 ${beforeSet.split(',').length} 张 / 刷新后 ${afterReload.set.split(',').length} 张，是否换组=${afterReload.set !== beforeSet}`)
+  await cdp.shot('03-game-second-visit.png')
+
   /* ---------- C. 访客边界：不建库、不发写请求 ---------- */
   const dbs = await cdp.evaluate(`(async () => { try { return (await indexedDB.databases()).length } catch { return -1 } })()`)
   if (dbs !== 0) problems.push(`小游戏页面创建了 ${dbs} 个 IndexedDB（应完全不用数据库）`)
