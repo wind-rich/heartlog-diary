@@ -19,3 +19,10 @@ export const ArchiveItemEditor = lazy(() => import('./archiveEditors').then((m) 
 export const ArchiveDeleteButton = lazy(() =>
   import('./archiveEditors').then((m) => ({ default: m.ArchiveDeleteButton })),
 )
+
+/**
+ * T8 待办相关组件同样懒加载。
+ * 它们会带进 tasks 模块（含 Dexie），访客端只要能不下载就绝不下载。
+ */
+export const TaskBell = lazy(() => import('./tasks/TaskBell'))
+export const TaskSummaryCard = lazy(() => import('./tasks/TaskSummaryCard'))

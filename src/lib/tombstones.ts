@@ -34,6 +34,12 @@ export const TOMBSTONE_ENTITIES = [
   'photos',
   'insights',
   'summaries',
+  // T8 待办三张表也参与删除同步：删除发生在 A 端时，B 端要能跟着删，
+  // 否则下次上行会把本机残行推回去，表现为「删了又回来」。
+  // 它们不进主同步的业务上行（SYNC_ENTITIES 不含），只共用墓碑上行与私有同步读端。
+  'tasks',
+  'taskReminders',
+  'taskOccurrences',
 ] as const
 
 let suppressed = 0

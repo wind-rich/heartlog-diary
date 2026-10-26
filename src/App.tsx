@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, Suspense, lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppProvider, useApp } from './state/app'
 import { ConfirmProvider, ToastProvider } from './components/ui'
@@ -14,6 +14,13 @@ import Album from './viewer/pages/Album'
 import Archive from './viewer/pages/Archive'
 import RecordDetail from './viewer/pages/RecordDetail'
 import SettingsPage from './pages/Settings'
+
+/**
+ * T8「为他记着」清单页由作者端懒加载。
+ * 直接静态 import 会把 tasks 模块（含 Dexie 查询）带进共享 chunk，
+ * 而 Home / Shell 是访客端也用的，必须保持访客端零数据库依赖。
+ */
+const Tasks = lazy(() => import('./viewer/pages/Tasks'))
 
 /**
  * 作者端：不再使用旧的「今天/时间线/回顾」界面，
@@ -67,6 +74,14 @@ function AuthorViewer() {
             <Route path="stories/:id" element={<RecordDetail />} />
             <Route path="album" element={<Album />} />
             <Route path="archive" element={<Archive />} />
+            <Route
+              path="tasks"
+              element={
+                <Suspense fallback={<Loading text="正在打开「为他记着」…" />}>
+                  <Tasks />
+                </Suspense>
+              }
+            />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

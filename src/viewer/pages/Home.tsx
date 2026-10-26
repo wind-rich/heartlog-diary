@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
 import { useAuthorReload } from '../author/AuthorReload'
-import { PersonEditor } from '../author/lazy'
+import { PersonEditor, TaskSummaryCard } from '../author/lazy'
 import {
   avatarUrlFor,
   DIRECTION_LABEL,
@@ -184,6 +184,13 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* ---------------- 为他记着（仅作者端） ---------------- */}
+      {editable && reload && (
+        <Suspense fallback={null}>
+          <TaskSummaryCard />
+        </Suspense>
+      )}
 
       {/* ---------------- 相伴天数 / 下一纪念日 ---------------- */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">

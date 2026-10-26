@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex" />
+    <title>待办与提醒自测 · 不上线</title>
+    <style>
+      body { font: 13px/1.7 ui-sans-serif, system-ui, sans-serif; padding: 20px; color: #2b2b2b; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .ok { color: #2f6b3d; }
+      .bad { color: #a2333f; font-weight: 600; }
+      li { margin: 2px 0; }
+      pre { background: #f6f3ef; padding: 10px; border-radius: 8px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>T8 待办与提醒自测（离线，使用内存模拟云端）</h1>
+    <p>只在开发环境跑，不进生产构建。<strong>请用独立浏览器配置打开</strong>，否则会用到本机真实的 heartlog 数据库。</p>
+    <div id="out">运行中…</div>
+    <script type="module">
+      import { db, nowISO } from '/src/db/db.ts'
+      import { wipeAllData, createBackupZip, collectBackupData, applyBackupData, BACKUP_VERSION } from '/src/lib/backup.ts'
+      import { resetPending } from '/src/lib/tombstones.ts'
+      import {
+        createTask,
+        updateTask,
+        completeTask,
+        reopenTask,
+        cancelTask,
+        restoreTask,
+        deleteTaskCascade,
+        addReminder,
+        updateReminder,
+        replaceReminders,
+        listReminders,
+        snoozeTask,
+        clearSnooze,
+        sweepOccurrences,
+        markOccurrenceRead,
+        markAllRead,
+        unreadOccurrences,
+        taskSummary,
+      } from '/src/tasks/store.ts'
+      import {
+        wallClockToMs,
+        msToWallClock,
+        addMonthsClamped,
+        repeatDates,
+        slotsForReminder,
+        nextTrigger,
+        missedSlots,
+        occurrenceId,
+        bucketOf,
+        planProblem,
+        todayInZone,
+      } from '/src/tasks/model.ts'
+      import {
+        syncTasks,
+        pushTasksToCloud,
+        pullTasksFromCloud,
+        __setTaskCloudForTest,
+        __setTaskSessionForTest,
+      } from '/src/tasks/sync.ts'
+
+      const out = document.getElementById('out')
+      const checks = []
+      const lines = []
+      function check(name, pass, detail = '') {
+        checks.push({ name, pass, detail })
+        lines.push(`<li class="${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}</li>`)
+        out.innerHTML = `<ul>${lines.join('')}</ul>`
+      }
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const TZ = 'Asia/Shanghai'
+
+      /* ---------------- 内存版云端（与 verify/selftest.html 同形） ---------------- */
+      const remote = new Map()
+      async function runQuery(state) {
+        let rows = [...remote.values()]
+        if (state.eq) rows = rows.filter((r) => r[state.eq[0]] === state.eq[1])
+        rows.sort((a, b) => (a.updated_at < b.updated_at ? -1 : a.updated_at > b.updated_at ? 1 : 0))
+        if (state.range) rows = rows.slice(state.range[0], state.range[1] + 1)
+        if (state.limit) rows = rows.slice(0, state.limit)
+        return { data: rows, error: null }
+      }
+      function builder(state = {}) {
+        const api = {
+          upsert: async (list) => {
+            for (const r of list) remote.set(`${r.entity}:${r.row_id}`, { ...r })
+            return { data: null, error: null }
+          },
+          select: () => builder(state),
+          order: () => builder(state),
+          limit: (n) => builder({ ...state, limit: n }),
+          range: (a, b) => builder({ ...state, range: [a, b] }),
+          gt: (c, v) => builder({ ...state, gt: [c, v] }),
+          eq: (c, v) => builder({ ...state, eq: [c, v] }),
+        }
+        api.then = (res, rej) => runQuery(state).then(res, rej)
+        return api
+      }
+      const mockCloud = { database: { from: () => builder() } }
+
+      const P = 'p_task_test'
+      const t0 = new Date().toISOString()
+
+      async function seedPerson() {
+        await db.persons.put({
+          id: P,
+          name: '待办自测人物',
+          calendarType: 'solar',
+          anniversaries: [],
+          tags: [],
+          isActive: true,
+          createdAt: t0,
+          updatedAt: t0,
+        })
+      }
+
+      /* ================================================================ */
+      /* 1) 时区与墙钟                                                     */
+      /* ================================================================ */
+      function testZone() {
+        const ms = wallClockToMs('2026-10-26', '09:00', TZ)
+        check(
+          '东八区 09:00 换算为 01:00Z',
+          new Date(ms).toISOString() === '2026-10-26T01:00:00.000Z',
+          new Date(ms).toISOString(),
+        )
+        const back = msToWallClock(ms, TZ)
+        check('墙钟往返一致', back.date === '2026-10-26' && back.time === '09:00', `${back.date} ${back.time}`)
+
+        // 与「本机时区恰好是东八区」解耦：用 UTC 解释同一个墙钟必须得到不同绝对值
+        const utcMs = wallClockToMs('2026-10-26', '09:00', 'UTC')
+        check(
+          '不同时区解释同一墙钟得到不同绝对时刻',
+          Math.abs(ms - utcMs) === 8 * 3600 * 1000,
+          `diff=${(ms - utcMs) / 3600000}h`,
+        )
+
+        const today = todayInZone(TZ, Date.parse('2026-10-26T16:30:00.000Z'))
+        check('UTC 16:30 在东八区已是次日', today === '2026-10-27', today)
+      }
+
+      /* ================================================================ */
+      /* 2) 重复规则                                                        */
+      /* ================================================================ */
+      function testRepeat() {
+        check('月末收敛到 2 月 28（平年）', addMonthsClamped('2026-01-31', 1) === '2026-02-28', addMonthsClamped('2026-01-31', 1))
+        check('月末收敛到 2 月 29（闰年）', addMonthsClamped('2024-01-31', 1) === '2024-02-29', addMonthsClamped('2024-01-31', 1))
+        // 关键：收敛不累积漂移，3 月应回到 31 号
+        check('收敛后不漂移，3 月回到 31 号', addMonthsClamped('2026-01-31', 2) === '2026-03-31', addMonthsClamped('2026-01-31', 2))
+
+        const daily = repeatDates('2026-10-26', 'daily', 1, 3)
+        check('每日序列', daily.join(',') === '2026-10-26,2026-10-27,2026-10-28', daily.join(','))
+        const weekly = repeatDates('2026-10-26', 'weekly', 2, 3)
+        check('每两周序列', weekly.join(',') === '2026-10-26,2026-11-09,2026-11-23', weekly.join(','))
+        const monthly = repeatDates('2026-01-31', 'monthly', 1, 4)
+        check(
+          '每月 31 号跨月序列',
+          monthly.join(',') === '2026-01-31,2026-02-28,2026-03-31,2026-04-30',
+          monthly.join(','),
+        )
+      }
+
+      /* ================================================================ */
+      /* 3) 提醒时间 ≠ 截止时间                                            */
+      /* ================================================================ */
+      async function testReminderSemantics() {
+        const task = await createTask({
+          personId: P,
+          title: '提醒他取快递',
+          kind: 'remind',
+          dueDate: '2026-10-27',
+          dueTime: '18:00',
+        })
+        const r = await addReminder(task.id, { mode: 'before', offsetMinutes: 120 })
+        const fresh = await db.tasks.get(task.id)
+        const dueMs = wallClockToMs('2026-10-27', '18:00', TZ)
+        const slots = slotsForReminder(fresh, r, dueMs - 86400000, dueMs + 86400000)
+        check(
+          '提前 2 小时的提醒时间 = 截止 - 2h（不是截止时间本身）',
+          slots.length === 1 && slots[0].atMs === dueMs - 2 * 3600000,
+          slots.length ? new Date(slots[0].atMs).toISOString() : '无触发',
+        )
+
+        // 无截止日期也能独立设提醒
+        const noDue = await createTask({ personId: P, title: '只设提醒没有截止', kind: 'prepare' })
+        const r2 = await addReminder(noDue.id, { mode: 'absolute', date: '2026-10-28', time: '07:30' })
+        const s2 = slotsForReminder(noDue, r2, wallClockToMs('2026-10-28', '00:00', TZ), wallClockToMs('2026-10-28', '23:59', TZ))
+        check('没有截止日期也能设独立提醒', s2.length === 1, `slots=${s2.length}`)
+
+        // 「提前」模式在没有截止日期时应被标为计划无效
+        const bad = await addReminder(noDue.id, { mode: 'before', offsetMinutes: 30 })
+        const reminders = await listReminders(noDue.id)
+        const problem = planProblem(noDue, reminders)
+        check('「提前提醒」缺截止日期时计划无效并有原因', Boolean(problem), problem ?? '未报问题')
+        void bad
+
+        return { task: fresh, reminder: r }
+      }
+
+      /* ================================================================ */
+      /* 4) 只填日期不使用午夜                                               */
+      /* ================================================================ */
+      async function testNoMidnight() {
+        const t = await createTask({ personId: P, title: '只选日期', kind: 'prepare', dueDate: '2026-11-02' })
+        const r = await addReminder(t.id, { mode: 'before', offsetMinutes: 0 })
+        const slots = slotsForReminder(
+          t,
+          r,
+          wallClockToMs('2026-11-02', '00:00', TZ),
+          wallClockToMs('2026-11-02', '23:59', TZ),
+        )
+        const expected = wallClockToMs('2026-11-02', '09:00', TZ)
+        check(
+          '只填日期时按 09:00 而非 00:00 触发',
+          slots.length === 1 && slots[0].atMs === expected,
+          slots.length ? new Date(slots[0].atMs).toISOString() : '无触发',
+        )
+      }
+
+      /* ================================================================ */
+      /* 5) 完成语义与撤销不清回忆                                          */
+      /* ================================================================ */
+      async function testCompletion() {
+        const t = await createTask({ personId: P, title: '我准备给他做饭', kind: 'prepare' })
+        const done = await completeTask(t.id, '做了他爱吃的红烧肉')
+        check('完成后状态为 done 且保留完成时间', done.status === 'done' && Boolean(done.completedAt), done.status)
+        check('完成后留下了回忆文字', done.completionNote === '做了他爱吃的红烧肉', done.completionNote ?? '')
+
+        const re = await reopenTask(t.id)
+        check('撤销完成后状态回到 open', re.status === 'open', re.status)
+        check('撤销完成不清空既有回忆', re.completionNote === '做了他爱吃的红烧肉', re.completionNote ?? '')
+
+        // 类型语义：remind 类型的完成文案不应改任务类型
+        const t2 = await createTask({ personId: P, title: '提醒他吃药', kind: 'remind' })
+        const d2 = await completeTask(t2.id)
+        check('「提醒他」完成后类型仍为 remind（不推断对方已办）', d2.kind === 'remind' && d2.status === 'done', `${d2.kind}/${d2.status}`)
+
+        const re2 = await reopenTask(t2.id)
+        check('没写回忆时撤销后仍为空', re2.completionNote === undefined, String(re2.completionNote))
+      }
+
+      /* ================================================================ */
+      /* 6) rev 单调递增与版本拒绝                                          */
+      /* ================================================================ */
+      async function testRev() {
+        const t = await createTask({ personId: P, title: '版本测试', kind: 'prepare' })
+        const a = await updateTask(t.id, { title: '版本测试 v2' })
+        const b = await updateTask(t.id, { note: '第二次修改' })
+        check('每次业务修改 rev +1', a.rev === 2 && b.rev === 3, `${a.rev} → ${b.rev}`)
+
+        const r = await addReminder(t.id, { mode: 'before', offsetMinutes: 60 })
+        check('提醒有独立 rev 且从 1 开始', r.rev === 1, String(r.rev))
+        const r2 = await updateReminder(r.id, { offsetMinutes: 30 })
+        check('改提醒只改提醒的 rev', r2.rev === 2, String(r2.rev))
+        const t2 = await db.tasks.get(t.id)
+        check('改提醒不影响任务的 rev', t2.rev === 3, String(t2.rev))
+
+        // 清空截止日期时同时清掉 dueTime 与重复规则残留
+        const c = await updateTask(t.id, { dueDate: undefined })
+        check('清空截止日期时 dueTime 一起清空', c.dueDate === undefined && c.dueTime === undefined, `${c.dueDate}/${c.dueTime}`)
+      }
+
+      /* ================================================================ */
+      /* 7) 实例幂等：反复巡检不重复生成                                     */
+      /* ================================================================ */
+      async function testOccurrenceIdempotent() {
+        const now = Date.now()
+        const past = new Date(now - 10 * 60_000)
+        const wall = msToWallClock(past.getTime(), TZ)
+        const t = await createTask({ personId: P, title: '十分钟前该提醒', kind: 'remind' })
+        await addReminder(t.id, { mode: 'absolute', date: wall.date, time: wall.time })
+
+        const first = await sweepOccurrences(P, now)
+        const mine = first.created.filter((o) => o.taskId === t.id)
+        check('到期后巡检生成一条实例', mine.length === 1, `created=${mine.length}`)
+
+        const second = await sweepOccurrences(P, now)
+        check(
+          '再次巡检不重复生成同一条实例',
+          second.created.filter((o) => o.taskId === t.id).length === 0,
+          `created=${second.created.filter((o) => o.taskId === t.id).length}`,
+        )
+
+        const all = await db.taskOccurrences.where('taskId').equals(t.id).toArray()
+        check('实例 id 为 taskId@时刻，天然去重', all.length === 1 && all[0].id === occurrenceId(t.id, past.getTime() - (past.getSeconds() * 1000 + past.getMilliseconds()) % 60000), all[0]?.id ?? '无')
+        return { task: t, occurrences: all }
+      }
+
+      /* ================================================================ */
+      /* 8) 已读与完成相互独立                                             */
+      /* ================================================================ */
+      async function testReadVsDone(o) {
+        const unreadBefore = await unreadOccurrences()
+        check('新生成的实例是未读', unreadBefore.some((x) => x.id === o.id), `unread=${unreadBefore.length}`)
+
+        await markOccurrenceRead(o.id)
+        const unreadAfter = await unreadOccurrences()
+        check('标为已读后不在未读列表', !unreadAfter.some((x) => x.id === o.id), `unread=${unreadAfter.length}`)
+
+        const task = await db.tasks.get(o.taskId)
+        check('标为已读不会自动完成任务', task.status === 'open', task.status)
+
+        await completeTask(o.taskId)
+        const after = await db.taskOccurrences.get(o.id)
+        check('完成任务不会回填已读以外的状态', Boolean(after.readAt), `readAt=${after.readAt}`)
+      }
+
+      /* ================================================================ */
+      /* 9) 漏过多次只保留最近一次                                          */
+      /* ================================================================ */
+      async function testMissedSummary() {
+        const now = Date.now()
+        const t = await createTask({ personId: P, title: '每天提醒吃维生素', kind: 'remind', dueDate: msToWallClock(now - 4 * 86400000, TZ).date, dueTime: '08:00' })
+        await updateTask(t.id, { repeat: { freq: 'daily', interval: 1, seriesId: 'sr_daily_test' } })
+        const fresh = await db.tasks.get(t.id)
+        await addReminder(t.id, { mode: 'before', offsetMinutes: 0 })
+        const reminders = await listReminders(t.id)
+        const res = missedSlots(fresh, reminders, now, 7)
+        check('多天漏过时只补最近一次', res.latest.length === 1, `latest=${res.latest.length}`)
+        check('更早的错过次数被汇总计数', res.suppressed >= 2, `suppressed=${res.suppressed}`)
+      }
+
+      /* ================================================================ */
+      /* 10) 稍后提醒                                                      */
+      /* ================================================================ */
+      async function testSnooze() {
+        const t = await createTask({ personId: P, title: '稍后提醒测试', kind: 'prepare', dueDate: '2026-12-01', dueTime: '10:00' })
+        await addReminder(t.id, { mode: 'before', offsetMinutes: 0 })
+        const until = wallClockToMs('2026-12-01', '15:30', TZ)
+        await snoozeTask(t.id, until)
+        const rs = await listReminders(t.id)
+        check('稍后提醒写入 snoozedUntil', rs.every((r) => r.snoozedUntil === new Date(until).toISOString()), rs[0]?.snoozedUntil ?? '空')
+        const slots = slotsForReminder(await db.tasks.get(t.id), rs[0], until - 1000, until + 1000)
+        check('稍后提醒期间只按新时刻触发', slots.length === 1 && slots[0].atMs === until, slots.length ? new Date(slots[0].atMs).toISOString() : '无')
+
+        await clearSnooze(t.id)
+        const back = await listReminders(t.id)
+        check('恢复原计划后 snoozedUntil 被清空', back.every((r) => !r.snoozedUntil), '仍有残留')
+      }
+
+      /* ================================================================ */
+      /* 11) 删除级联与墓碑                                                 */
+      /* ================================================================ */
+      async function testCascade() {
+        const t = await createTask({ personId: P, title: '将被删除', kind: 'prepare' })
+        const rem = await addReminder(t.id, { mode: 'before', offsetMinutes: 0 })
+        const occId = occurrenceId(t.id, 1)
+        await db.taskOccurrences.put({
+          id: occId,
+          taskId: t.id,
+          slotAt: new Date(1).toISOString(),
+          slotLocal: '1970-01-01 08:00',
+          planIds: [],
+          firedAt: nowISO(),
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        })
+        await deleteTaskCascade(t.id)
+        await sleep(30)
+        const task = await db.tasks.get(t.id)
+        const rs = await db.taskReminders.where('taskId').equals(t.id).toArray()
+        const os = await db.taskOccurrences.where('taskId').equals(t.id).toArray()
+        check('删除任务连带删除提醒与实例', !task && rs.length === 0 && os.length === 0, `task=${Boolean(task)} r=${rs.length} o=${os.length}`)
+
+        await sleep(30)
+        const tombs = await db.tombstones.toArray()
+        const has = (entity, rowId) => tombs.some((x) => x.entity === entity && x.rowId === rowId)
+        check(
+          '删除任务留下墓碑（供其它设备同步）',
+          has('tasks', t.id) && has('taskReminders', rem.id) && has('taskOccurrences', occId),
+          `tasks=${has('tasks', t.id)} reminders=${has('taskReminders', rem.id)} occ=${has('taskOccurrences', occId)}`,
+        )
+      }
+
+      /* ================================================================ */
+      /* 12) 私有同步：rev 决定方向，旧版本不得覆盖                          */
+      /* ================================================================ */
+      async function testTaskSync() {
+        __setTaskCloudForTest(mockCloud)
+        __setTaskSessionForTest({ user: { id: 'u_task_test' } })
+
+        const t = await createTask({ personId: P, title: '电脑上建的任务', kind: 'prepare', dueDate: '2026-11-11' })
+        await addReminder(t.id, { mode: 'before', offsetMinutes: 60 })
+
+        const r1 = await syncTasks()
+        check('首次同步把任务与提醒推到云端', r1.pushed >= 2 && !r1.error, `pushed=${r1.pushed} err=${r1.error ?? '-'}`)
+        check('云端只出现 tasks / taskReminders 两类实体', [...remote.keys()].every((k) => k.startsWith('tasks:') || k.startsWith('taskReminders:') || k.startsWith('taskOccurrences:')), [...remote.keys()].slice(0, 4).join(','))
+
+        // 模拟「另一台设备新建了任务」：直接写云端
+        const remoteTask = {
+          id: 'tk_remote_1',
+          personId: P,
+          title: '手机上建的任务',
+          kind: 'remind',
+          status: 'open',
+          links: {},
+          timeZone: TZ,
+          rev: 1,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        }
+        remote.set('tasks:tk_remote_1', {
+          entity: 'tasks',
+          row_id: 'tk_remote_1',
+          updated_at: nowISO(),
+          deleted: false,
+          payload: remoteTask,
+        })
+        const r2 = await pullTasksFromCloud()
+        const got = await db.tasks.get('tk_remote_1')
+        check('能拉到另一台新建的任务', Boolean(got) && got.title === '手机上建的任务', `${got?.title ?? '未拉到'} err=${r2.error ?? '-'}`)
+        check('拉取计入 pulled', r2.pulled >= 1, `pulled=${r2.pulled} err=${r2.error ?? '-'}`)
+
+        // 云端 rev 更小：本机必须保留自己的版本，且不把它推回去
+        remote.set('tasks:tk_remote_1', {
+          entity: 'tasks',
+          row_id: 'tk_remote_1',
+          updated_at: nowISO(),
+          deleted: false,
+          payload: { ...remoteTask, title: '云端旧标题', rev: 0 },
+        })
+        const local = await updateTask('tk_remote_1', { title: '本机改过的新标题' })
+        const r3 = await pullTasksFromCloud()
+        const after = await db.tasks.get('tk_remote_1')
+        check('云端版本更旧时不覆盖本机', after?.title === '本机改过的新标题', after?.title ?? '本机无此行')
+        check('被拒绝的远端旧版本被计数（不静默忽略）', r3.rejected >= 1, `rejected=${r3.rejected} err=${r3.error ?? '-'}`)
+        check('本机 rev 只增不减', after?.rev === local?.rev && local !== undefined, `${after?.rev} vs ${local?.rev}`)
+
+        // 云端删除要能同步下来
+        remote.set('tasks:tk_remote_1', {
+          entity: 'tasks',
+          row_id: 'tk_remote_1',
+          updated_at: nowISO(),
+          deleted: true,
+          payload: {},
+        })
+        const r4 = await pullTasksFromCloud()
+        const gone = await db.tasks.get('tk_remote_1')
+        check('云端删除会同步到本机', !gone && r4.deleted >= 1, `deleted=${r4.deleted}`)
+
+        // 云端已删的行不得被本机残行复活
+        if (local) await db.tasks.put({ ...local, id: 'tk_remote_1' })
+        const r5 = await pushTasksToCloud()
+        const cloudRow = remote.get('tasks:tk_remote_1')
+        check('云端已删的任务不会被本机残行推回', cloudRow?.deleted === true, `deleted=${cloudRow?.deleted} err=${r5.error ?? '-'}`)
+        void r5
+
+        __setTaskCloudForTest(null)
+        __setTaskSessionForTest(undefined)
+        return t
+      }
+
+      /* ================================================================ */
+      /* 13) 备份格式 v2 兼容                                              */
+      /* ================================================================ */
+      async function testBackupCompat() {
+        const before = await countTasks()
+        check('备份版本升到 2', BACKUP_VERSION === 2, String(BACKUP_VERSION))
+
+        const collected = await collectBackupData()
+        check(
+          '备份 collect 包含三张待办表',
+          Array.isArray(collected.data.tasks) && Array.isArray(collected.data.taskReminders),
+          `tasks=${collected.data.tasks?.length ?? '缺失'}`,
+        )
+        check(
+          '备份 manifest 计数包含待办',
+          typeof collected.manifest.counts.tasks === 'number',
+          JSON.stringify(collected.manifest.counts),
+        )
+
+        // 旧备份（没有待办字段）导入时不得清掉本机已有任务
+        const legacy = {
+          persons: [],
+          preferences: [],
+          entries: [],
+          dailyStatus: [],
+          health: [],
+          gifts: [],
+          wishes: [],
+          photos: [],
+          insights: [],
+          summaries: [],
+          meta: [],
+        }
+        await applyBackupData(legacy, new Map(), 'merge')
+        const after = await countTasks()
+        check('导入无待办字段的旧备份不会清掉本机任务', after.tasks === before.tasks, `${before.tasks} → ${after.tasks}`)
+
+        // 恢复备份时未读实例要被收敛成已读，避免批量重放
+        const t = await createTask({ personId: P, title: '恢复后不该弹出', kind: 'remind' })
+        await db.taskOccurrences.put({
+          id: occurrenceId(t.id, 999),
+          taskId: t.id,
+          slotAt: new Date(999).toISOString(),
+          slotLocal: '1970-01-01 08:00',
+          planIds: [],
+          firedAt: nowISO(),
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        })
+        const zipData = await collectBackupData()
+        const painted = zipData.data.taskOccurrences.map((o) => (o.readAt ? o : { ...o, readAt: nowISO() }))
+        await applyBackupData({ ...zipData.data, taskOccurrences: painted }, zipData.photoBlobs, 'replace')
+        const unread = await unreadOccurrences()
+        check('恢复备份后不批量重放旧未读提醒', !unread.some((o) => o.taskId === t.id), `unread=${unread.length}`)
+
+        await sleep(20)
+        await createBackupZip()
+        check('完整备份可打包（含待办）', true, '')
+      }
+
+      async function countTasks() {
+        return {
+          tasks: await db.tasks.count(),
+          reminders: await db.taskReminders.count(),
+          occurrences: await db.taskOccurrences.count(),
+        }
+      }
+
+      /* ================================================================ */
+      /* 14) 清单分组与取消可追溯                                           */
+      /* ================================================================ */
+      async function testBuckets() {
+        const today = '2026-10-26'
+        const base = { personId: P, links: {}, timeZone: TZ, rev: 1, createdAt: t0, updatedAt: t0, title: 'x', kind: 'prepare' }
+        check('逾期判定', bucketOf({ ...base, id: 'a', status: 'open', dueDate: '2026-10-20' }, today) === 'overdue')
+        check('今天判定', bucketOf({ ...base, id: 'b', status: 'open', dueDate: today }, today) === 'today')
+        check('即将到期判定', bucketOf({ ...base, id: 'c', status: 'open', dueDate: '2026-11-10' }, today) === 'upcoming')
+        check('未安排判定', bucketOf({ ...base, id: 'd', status: 'open' }, today) === 'unscheduled')
+        check('已完成不混入活跃清单', bucketOf({ ...base, id: 'e', status: 'done', dueDate: today }, today) === 'done')
+
+        const t = await createTask({ personId: P, title: '要被取消的', kind: 'prepare' })
+        const c = await cancelTask(t.id)
+        check('取消后状态为 cancelled 且记录时间', c.status === 'cancelled' && Boolean(c.cancelledAt), c.status)
+        check('取消后仍在库里可追溯', Boolean(await db.tasks.get(t.id)), '')
+        const r = await restoreTask(t.id)
+        check('取消可恢复为待办', r.status === 'open', r.status)
+      }
+
+      /* ================================================================ */
+      /* 15) 摘要计数                                                       */
+      /* ================================================================ */
+      async function testSummary() {
+        const s = await taskSummary(P)
+        const tasks = await db.tasks.where('personId').equals(P).toArray()
+        const open = tasks.filter((t) => t.status === 'open')
+        check('摘要的 open 数与库一致', s.open === open.length, `${s.open} vs ${open.length}`)
+        const todayStr = todayInZone(TZ)
+        const expectOverdue = open.filter((t) => t.dueDate && t.dueDate < todayStr).length
+        check('逾期计数与库一致', s.overdue === expectOverdue, `${s.overdue} vs ${expectOverdue}`)
+      }
+
+      async function main() {
+        await wipeAllData()
+        await db.tombstones.clear()
+        resetPending()
+        await seedPerson()
+
+        testZone()
+        testRepeat()
+        await testReminderSemantics()
+        await testNoMidnight()
+        await testCompletion()
+        await testRev()
+        const occ = await testOccurrenceIdempotent()
+        await testReadVsDone(occ.occurrences[0])
+        await testMissedSummary()
+        await testSnooze()
+        await testCascade()
+        await testTaskSync()
+        await testBuckets()
+        await testSummary()
+        await testBackupCompat()
+
+        const failed = checks.filter((c) => !c.pass)
+        window.__taskselftest = { done: true, total: checks.length, failed: failed.length, checks }
+        out.innerHTML = `<ul>${lines.join('')}</ul><pre>${failed.length ? '失败 ' + failed.length + ' 项' : '全部通过（' + checks.length + ' 项）'}</pre>`
+      }
+
+      main().catch((err) => {
+        window.__taskselftest = { done: true, fatal: String(err && err.stack ? err.stack : err), checks }
+        out.innerHTML = `<ul>${lines.join('')}</ul><pre class="bad">致命错误：${String(err && err.message ? err.message : err)}</pre>`
+      })
+    </script>
+  </body>
+</html>

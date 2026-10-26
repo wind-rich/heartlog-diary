@@ -29,7 +29,17 @@ async function healStaleCloudCache(): Promise<void> {
     if (localStorage.getItem(FLAG)) return
     const regs = await navigator.serviceWorker.getRegistrations()
     for (const reg of regs) {
-      // 注销旧 SW，让下一次加载拿到修好的版本；页面本身不受影响
+      /**
+       * 只注销「本应用自己的静态缓存 worker」，**不要**注销推送 worker。
+       *
+       * 早期实现无条件注销所有 registration。等 T8 加上推送 worker 之后，
+       * 访客只要打开一次页面就会把它 deregister 掉 —— 订阅随之失效，
+       * 表现为「昨天还能收到提醒，今天突然收不到了」，而且没有任何报错。
+       * 这里按脚本文件名白名单判断：名字里带 push / tasks-sw 的一律保留。
+       */
+      const scriptUrl =
+        reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || ''
+      if (/push|tasks-sw/i.test(scriptUrl)) continue
       await reg.unregister().catch(() => undefined)
     }
     if (typeof caches !== 'undefined') {

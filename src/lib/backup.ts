@@ -12,10 +12,19 @@ import type {
   Summary,
   Wish,
 } from '../db/types'
+import type { Task, TaskOccurrence, TaskReminder } from '../tasks/types'
 import { downloadBlob } from './exporter'
 import { withDeletionsSuppressed } from './tombstones'
 
-export const BACKUP_VERSION = 1
+/**
+ * 备份格式版本。
+ *
+ * v1：业务实体 + meta（无待办）
+ * v2：T8 新增 tasks / taskReminders / taskOccurrences。
+ *     旧包读入时这三项缺失 → 视为空数组，不覆盖已有新任务（大纲 T8-A 要求）。
+ *     新包被旧版本应用读取时只会忽略这三个字段，其它内容照常恢复。
+ */
+export const BACKUP_VERSION = 2
 export const BACKUP_APP_ID = 'heartlog'
 
 /** data.json 中的照片元信息（不含二进制） */
@@ -33,6 +42,10 @@ export interface BackupData {
   insights: PortraitInsight[]
   summaries: Summary[]
   meta: { key: string; value: unknown }[]
+  /** v2 起：T8 待办（均为私有内容，不进公开快照） */
+  tasks?: Task[]
+  taskReminders?: TaskReminder[]
+  taskOccurrences?: TaskOccurrence[]
 }
 
 export interface BackupManifest {
@@ -67,20 +80,37 @@ export interface CollectedBackup {
 }
 
 export async function collectBackupData(): Promise<CollectedBackup> {
-  const [persons, preferences, entries, dailyStatus, health, gifts, wishes, photos, insights, summaries, meta] =
-    await Promise.all([
-      db.persons.toArray(),
-      db.preferences.toArray(),
-      db.entries.toArray(),
-      db.dailyStatus.toArray(),
-      db.health.toArray(),
-      db.gifts.toArray(),
-      db.wishes.toArray(),
-      db.photos.toArray(),
-      db.insights.toArray(),
-      db.summaries.toArray(),
-      db.meta.toArray(),
-    ])
+  const [
+    persons,
+    preferences,
+    entries,
+    dailyStatus,
+    health,
+    gifts,
+    wishes,
+    photos,
+    insights,
+    summaries,
+    meta,
+    tasks,
+    taskReminders,
+    taskOccurrences,
+  ] = await Promise.all([
+    db.persons.toArray(),
+    db.preferences.toArray(),
+    db.entries.toArray(),
+    db.dailyStatus.toArray(),
+    db.health.toArray(),
+    db.gifts.toArray(),
+    db.wishes.toArray(),
+    db.photos.toArray(),
+    db.insights.toArray(),
+    db.summaries.toArray(),
+    db.meta.toArray(),
+    db.tasks.toArray(),
+    db.taskReminders.toArray(),
+    db.taskOccurrences.toArray(),
+  ])
 
   const photoMetas: PhotoMeta[] = []
   const photoBlobs: PhotoBinaryMap = new Map()
@@ -105,6 +135,9 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     insights,
     summaries,
     meta,
+    tasks,
+    taskReminders,
+    taskOccurrences,
   }
 
   const manifest: BackupManifest = {
@@ -123,6 +156,9 @@ export async function collectBackupData(): Promise<CollectedBackup> {
       photos: photos.length,
       insights: insights.length,
       summaries: summaries.length,
+      tasks: tasks.length,
+      taskReminders: taskReminders.length,
+      taskOccurrences: taskOccurrences.length,
     },
     note: '这是「心意簿」的完整备份，包含全部文字记录与照片原图。请妥善保管。',
   }
@@ -195,6 +231,18 @@ function signatureOfEntry(e: Entry): string {
   return `${e.personId}|${e.occurredAt}|${e.title}|${e.type}`
 }
 
+/**
+ * 恢复来的发生实例一律视为「已读历史」。
+ *
+ * 为什么：实例就是通知记录本身。如果原样恢复未读实例，
+ * 换设备/恢复备份后通知铃会一次性冒出几十条早已过期的提醒 ——
+ * 这就是大纲禁止的「批量重放过期通知」。
+ * 保留实例本身（用于「那次提醒过」的追溯），只把未读状态收敛掉。
+ */
+function restoredOccurrences(list: TaskOccurrence[]): TaskOccurrence[] {
+  return list.map((o) => (o.readAt || !o.firedAt ? o : { ...o, readAt: o.firedAt }))
+}
+
 /** 校验备份来源，来源不匹配一律中止，避免污染现有数据 */
 export function validateManifest(manifest: BackupManifest | undefined): string | null {
   if (!manifest) return '备份缺少 manifest 信息'
@@ -245,12 +293,32 @@ export async function applyBackupData(
     ['summaries', db.summaries, data.summaries ?? []],
     ['photos', db.photos, photoRows],
     ['meta', db.meta, data.meta ?? []],
+    // v2 起的三张待办表。旧备份里没有这三项时是空数组，等于「不导入」，
+    // 因此不会覆盖本机已有任务（大纲：旧备份缺字段时兼容为空，不覆盖新任务）。
+    ['tasks', db.tasks, data.tasks ?? []],
+    ['taskReminders', db.taskReminders, data.taskReminders ?? []],
+    ['taskOccurrences', db.taskOccurrences, restoredOccurrences(data.taskOccurrences ?? [])],
   ] as const
 
   const runImport = () =>
     db.transaction(
     'rw',
-    [db.persons, db.preferences, db.entries, db.dailyStatus, db.health, db.gifts, db.wishes, db.photos, db.insights, db.summaries, db.meta],
+    [
+      db.persons,
+      db.preferences,
+      db.entries,
+      db.dailyStatus,
+      db.health,
+      db.gifts,
+      db.wishes,
+      db.photos,
+      db.insights,
+      db.summaries,
+      db.meta,
+      db.tasks,
+      db.taskReminders,
+      db.taskOccurrences,
+    ],
     async () => {
       if (mode === 'replace') {
         for (const [name, table] of tables) {
@@ -370,7 +438,22 @@ export async function wipeAllData(): Promise<void> {
   await withDeletionsSuppressed(() =>
     db.transaction(
     'rw',
-    [db.persons, db.preferences, db.entries, db.dailyStatus, db.health, db.gifts, db.wishes, db.photos, db.insights, db.summaries, db.meta],
+    [
+      db.persons,
+      db.preferences,
+      db.entries,
+      db.dailyStatus,
+      db.health,
+      db.gifts,
+      db.wishes,
+      db.photos,
+      db.insights,
+      db.summaries,
+      db.meta,
+      db.tasks,
+      db.taskReminders,
+      db.taskOccurrences,
+    ],
     async () => {
       await Promise.all([
         db.persons.clear(),
@@ -384,6 +467,10 @@ export async function wipeAllData(): Promise<void> {
         db.insights.clear(),
         db.summaries.clear(),
         db.meta.clear(),
+        // T8：待办也是用户数据，清空全部数据时必须一起清，否则会留下孤儿任务
+        db.tasks.clear(),
+        db.taskReminders.clear(),
+        db.taskOccurrences.clear(),
       ])
     },
     ),

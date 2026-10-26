@@ -1,11 +1,13 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
-import { BookHeart, Images, Home, UserRound, Heart, Settings as SettingsIcon } from 'lucide-react'
+import { BookHeart, Images, Home, UserRound, Heart, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
+import { Suspense } from 'react'
 import { useSnapshotState } from '../state/SnapshotContext'
 import { useSnapshot } from '../state/SnapshotContext'
 import { SampleBadge } from './bits'
 import { fmtDate, parseAny, fmtTime } from '../../lib/date'
 import { snapshotCounts } from '../lib/data'
+import { TaskBell } from '../author/lazy'
 
 const NAV = [
   { to: '/', label: '首页', icon: Home, end: true },
@@ -13,6 +15,13 @@ const NAV = [
   { to: '/album', label: '相册', icon: Images },
   { to: '/archive', label: '档案', icon: UserRound },
 ]
+
+/**
+ * 作者端独有的「为他记着」入口。
+ * 与访客端 NAV 分开维护：待办是私有内容（D-008），
+ * 访客端既不显示入口，也没有对应路由。
+ */
+const AUTHOR_NAV = [{ to: '/tasks', label: '记着', icon: CalendarCheck, end: false }]
 
 function PreviewBar({ onExit }: { onExit: () => void }) {
   const s = useSnapshot()
@@ -119,6 +128,12 @@ export function Shell({
           <div className="flex-1" />
 
           {editable && (
+            <Suspense fallback={null}>
+              <TaskBell />
+            </Suspense>
+          )}
+
+          {editable && (
             <NavLink
               to="/settings"
               aria-label="设置"
@@ -134,7 +149,7 @@ export function Shell({
           )}
 
           <nav className="hidden items-center gap-1 md:flex">
-            {NAV.map((n) => (
+            {(editable ? [...NAV, ...AUTHOR_NAV] : NAV).map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -218,8 +233,8 @@ export function Shell({
       </footer>
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-cream-200 bg-[#FFFCF8]/95 backdrop-blur-md md:hidden">
-        <div className={editable ? 'grid grid-cols-5' : 'grid grid-cols-4'} style={{ paddingBottom: 'var(--safe-bottom)' }}>
-          {NAV.map((n) => (
+        <div className={editable ? 'grid grid-cols-6' : 'grid grid-cols-4'} style={{ paddingBottom: 'var(--safe-bottom)' }}>
+          {(editable ? [...NAV, ...AUTHOR_NAV] : NAV).map((n) => (
             <NavLink
               key={n.to}
               to={n.to}

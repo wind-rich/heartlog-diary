@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import { recordDeletion, setTombstoneSink, TOMBSTONE_ENTITIES, type Tombstone } from '../lib/tombstones'
 import type { ConflictCopy } from '../lib/conflicts'
+import type { Task, TaskOccurrence, TaskReminder } from '../tasks/types'
 import type {
   AIConfig,
   AppPrefs,
@@ -31,6 +32,9 @@ export class HeartLogDB extends Dexie {
   meta!: Table<MetaRow, string>
   tombstones!: Table<Tombstone, string>
   conflicts!: Table<ConflictCopy, string>
+  tasks!: Table<Task, string>
+  taskReminders!: Table<TaskReminder, string>
+  taskOccurrences!: Table<TaskOccurrence, string>
 
   constructor() {
     super('heartlog')
@@ -54,6 +58,19 @@ export class HeartLogDB extends Dexie {
     // v3 只加一张表：同步冲突副本。覆盖前先留一份被丢弃的版本，可事后查看/取回。
     this.version(3).stores({
       conflicts: 'id, entity, rowId, discardedUpdatedAt, detectedAt, dismissedAt',
+    })
+    /**
+     * v4：T8「为他记着」三张表。仍是增量新增，不动 v1~v3 的任何表与数据。
+     * - tasks：任务本身（rev 为业务版本，与 updatedAt 分开，供私有同步拒绝旧版本覆盖）
+     * - taskReminders：提醒计划，一个任务可多条；rev 独立，编辑提醒不会改任务版本
+     * - taskOccurrences：发生实例，id = `${taskId}@${slotMs}` 天然幂等，
+     *   站内提醒与系统通知共用它，所以「已读」与「完成」是两件事
+     * 三张表都不参与公开发布（D-008 默认私有）。
+     */
+    this.version(4).stores({
+      tasks: 'id, personId, status, kind, dueDate, updatedAt, *seriesId',
+      taskReminders: 'id, taskId, enabled, updatedAt',
+      taskOccurrences: 'id, taskId, slotAt, firedAt, readAt',
     })
   }
 }

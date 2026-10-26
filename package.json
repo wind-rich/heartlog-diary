@@ -16,6 +16,7 @@
     "verify:snapshot": "node verify/verify-real-snapshot.mjs",
     "verify:author": "node verify/verify-author.mjs",
     "verify:sync": "node verify/verify-sync.mjs",
+    "verify:tasks": "node verify/verify-tasks.mjs",
     "verify:cloud-publish": "node verify/verify-cloud-publish.mjs",
     "verify:viewer-build": "node verify/verify-viewer-build.mjs",
     "preview": "vite preview --host",

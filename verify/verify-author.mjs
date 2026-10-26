@@ -51,6 +51,29 @@ if (swSkipsCloud && !cloudSkipBeforeCache) {
 }
 if (/heartlog-v1/.test(sw)) problems.push('Service Worker 缓存版本未升级，旧缓存不会被清除')
 
+/* T8 场景 J：SW 自愈不能顺手注销推送 worker。
+   否则访客打开一次页面就把推送订阅 deregister 掉，表现为通知「突然收不到」。 */
+const entrySrc = readFileSync(join(ROOT, 'src/viewer/entry.tsx'), 'utf8')
+if (/for \(const reg of regs\) \{\s*await reg\.unregister\(\)/.test(entrySrc)) {
+  problems.push('访客端自愈逻辑无条件注销所有 Service Worker，会连带注销推送 worker')
+}
+const keepsPushWorker = /scriptURL/.test(entrySrc) && /push|tasks-sw/i.test(entrySrc)
+if (!keepsPushWorker) problems.push('访客端自愈未按脚本名保留推送 worker（场景 J）')
+
+/* T8 隐私隔离：私有待办不得进入公开快照构建脚本的白名单 */
+const snapshotScript = readFileSync(join(ROOT, 'scripts/build-public-snapshot.mjs'), 'utf8')
+if (/\btasks\b/.test(snapshotScript) || /taskOccurrences/.test(snapshotScript)) {
+  problems.push('公开快照脚本里出现了 tasks 相关字样，需确认私有待办没有进入公开包')
+}
+const publishSrc = readFileSync(join(ROOT, 'src/lib/publish.ts'), 'utf8')
+if (/db\.tasks|taskReminders|taskOccurrences/.test(publishSrc)) {
+  problems.push('发布链路（publish.ts）引用了待办表，私有内容可能被发布出去')
+}
+const viewerTypes = readFileSync(join(ROOT, 'src/viewer/types.ts'), 'utf8')
+if (/interface PublicTask|PublicTask\b/.test(viewerTypes)) {
+  problems.push('展示端公开契约里出现了任务类型，违反 D-008 默认私有')
+}
+
 function detectChrome() {
   const c = [
     process.env.HL_CHROME,
