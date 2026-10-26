@@ -4,7 +4,7 @@ import type { PublishedSnapshot, SnapshotScene } from './types'
 import { VIEWER_FORMAT_VERSION } from './types'
 import { SnapshotProvider } from './state/SnapshotContext'
 import { getDraftSnapshot, getSnapshot } from './data/sample'
-import { fetchCloudSnapshot, fetchThumbMap } from './data/cloud'
+import { fetchCloudSnapshot, fetchPublishState, fetchThumbMap } from './data/cloud'
 import { Shell } from './components/Shell'
 import Home from './pages/Home'
 import Stories from './pages/Stories'
@@ -112,6 +112,8 @@ type Resolved =
   | { status: 'ready'; snapshot: PublishedSnapshot; warnings: string[] }
   | { status: 'sample' }
   | { status: 'error'; message: string }
+  /** 作者主动撤回：明确告知「暂时没有开放」，不再回退到静态旧内容 */
+  | { status: 'offline'; note: string }
 
 /**
  * 展示端根组件。
@@ -187,6 +189,21 @@ export default function ViewerApp() {
         // 云端不可用（离线/策略变更）不是致命错误，继续走静态
       }
       if (cancelled) return
+
+      /**
+       * 云端没有 live 快照时，先问访问指针再决定要不要退回静态。
+       *
+       * 作者撤回后快照会下线（is_live=false），如果这里直接退回构建时的静态
+       * 快照，撤回就完全无效——访客看到的还是那套旧内容。只有当指针说
+       * 「已经下线」时停在这里；指针不存在（从没发布过）才继续走静态/演示。
+       */
+      const publishState = await fetchPublishState()
+      if (cancelled) return
+      if (publishState.state === 'retracted') {
+        setResolved({ status: 'offline', note: publishState.note })
+        return
+      }
+
       if (!(await loadStatic()) && !cancelled) setResolved({ status: 'sample' })
     })()
 
@@ -211,6 +228,17 @@ export default function ViewerApp() {
     return (
       <CenteredCard title="正在读取发布内容">
         内容来自作者发布的只读快照，不连接作者设备或数据库。
+      </CenteredCard>
+    )
+  }
+
+  if (resolved.status === 'offline') {
+    return (
+      <CenteredCard title="这个页面暂时没有开放">
+        <p>{resolved.note ? resolved.note : '作者把展示页暂时下线了，稍后再来看看吧。'}</p>
+        <p className="mt-2 text-[11.5px] text-ink-300">
+          这里不会显示旧内容：下线是作者的选择，不是加载失败。
+        </p>
       </CenteredCard>
     )
   }

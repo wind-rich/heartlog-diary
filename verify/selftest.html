@@ -32,8 +32,14 @@
       } from '/src/lib/sync.ts'
       import { resetPending } from '/src/lib/tombstones.ts'
       import { __snapshotToBackupDataForTest } from '/src/lib/publishedCopy.ts'
+      import { cleanupConflicts, dismissConflict, restoreConflict } from '/src/lib/conflicts.ts'
       import {
         publishToCloud,
+        previewPublish,
+        rollbackToVersion,
+        retractPublish,
+        resumePublish,
+        currentPublishState,
         __setPublishDbForTest,
         __skipPublishSessionForTest,
       } from '/src/lib/publish.ts'
@@ -226,16 +232,30 @@
        * 这个 mock 就是为了让同类问题在自测阶段直接爆出来。
        */
       function makeStrictDb() {
-        const snapshots = new Map()
-        const media = new Map() // `${photo_id}:${kind}` → row
-        const calls = { media: 0, snapshot: 0 }
+        /* 四张表各一份内存副本：快照 / 媒体 / 版本历史 / 访问指针 */
+        const tables = {
+          heartlog_public_snapshot: new Map(), // owner_id → row
+          heartlog_public_media: new Map(), // `${photo_id}:${kind}` → row
+          heartlog_publish_history: new Map(), // publish_id → row
+          heartlog_publish_state: new Map(), // owner_id → row
+        }
+        const calls = { media: 0, snapshot: 0, history: 0, state: 0 }
         // 故障注入：只允许前 N 次媒体写入成功，之后全部报错（用于验证部分失败中止）
         let failAfter = Infinity
         let mediaWrites = 0
 
+        const rowsOf = (table) => [...(tables[table]?.values() ?? [])]
+
         const builder = (table, state = {}) => {
+          const apply = (rows) => {
+            let out = rows
+            if (state.eq) out = out.filter((r) => r[state.eq[0]] === state.eq[1])
+            if (state.limit) out = out.slice(0, state.limit)
+            return out
+          }
           const api = {
             upsert: async (row) => {
+              const owner = row.owner_id || 'u_selftest'
               if (table === 'heartlog_public_media') {
                 if (!row.publish_id) return { data: null, error: { message: 'null value in column "publish_id" violates not-null constraint' } }
                 if (!row.data_b64) return { data: null, error: { message: 'null value in column "data_b64"' } }
@@ -243,31 +263,50 @@
                 if (mediaWrites > failAfter) {
                   return { data: null, error: { message: '模拟网关拒绝：媒体写入失败' } }
                 }
-                media.set(`${row.photo_id}:${row.kind}`, { ...row, owner_id: row.owner_id || 'u_selftest' })
+                tables[table].set(`${row.photo_id}:${row.kind}`, { ...row, owner_id: owner })
                 calls.media++
+              } else if (table === 'heartlog_publish_history') {
+                if (!row.publish_id) return { data: null, error: { message: 'history 缺少 publish_id' } }
+                if (!row.payload) return { data: null, error: { message: 'history 缺少 payload' } }
+                tables[table].set(row.publish_id, { ...row, owner_id: owner })
+                calls.history++
+              } else if (table === 'heartlog_publish_state') {
+                if (!row.state) return { data: null, error: { message: 'state 缺少 state' } }
+                tables[table].set(owner, { ...row, owner_id: owner })
+                calls.state++
               } else {
                 if (!row.publish_id) return { data: null, error: { message: 'snapshot 缺少 publish_id' } }
-                snapshots.set(row.owner_id || 'u_selftest', { ...row, owner_id: row.owner_id || 'u_selftest' })
+                tables[table].set(owner, { ...row, owner_id: owner })
                 calls.snapshot++
               }
               return { data: null, error: null }
             },
+            /** 回退时更新 last_activated_at 用 */
+            update: (patch) => ({
+              eq: async (col, v) => {
+                for (const [key, r] of tables[table]) {
+                  if (r[col] === v) tables[table].set(key, { ...r, ...patch })
+                }
+                return { data: null, error: null }
+              },
+              then: (res) => res({ data: null, error: null }),
+            }),
             select: () => builder(table, state),
             limit: (n) => builder(table, { ...state, limit: n }),
             eq: (col, v) => builder(table, { ...state, eq: [col, v] }),
             order: () => builder(table, state),
           }
-          api.then = (res) => {
-            const rows = table === 'heartlog_public_media' ? [...media.values()] : [...snapshots.values()]
-            res({ data: state.limit ? rows.slice(0, state.limit) : rows, error: null })
-          }
+          api.then = (res) => res({ data: apply(rowsOf(table)), error: null })
           return api
         }
 
         return {
           db: { from: (t) => builder(t) },
-          snapshots,
-          media,
+          tables,
+          snapshots: tables.heartlog_public_snapshot,
+          media: tables.heartlog_public_media,
+          history: tables.heartlog_publish_history,
+          states: tables.heartlog_publish_state,
           calls,
           resetFailAfter: (n) => {
             failAfter = n
@@ -316,6 +355,83 @@
         check('重复发布：不重传未变的照片', strict.calls.media === before && r2.photosUploaded === 0, `新增上传 ${strict.calls.media - before} 次`)
         check('重复发布：跳过计数正确', r2.photosSkipped === 4, `skipped=${r2.photosSkipped}`)
 
+        /* ---- T4：版本历史 / 预览差异 / 回退 / 撤回 ---- */
+        // r1 与 r2 已各写一条历史，这里用相对计数，避免把「几次发布」写死
+        const history0 = strict.history.size
+        check('发布：每次发布留一条版本历史', history0 === 2, `history=${history0}`)
+        const histRow = [...strict.history.values()][0]
+        check(
+          '发布：历史 payload 与线上内容一致',
+          Boolean(histRow) && histRow.payload?.entries?.length === snapRow.payload.entries.length,
+          `history.entries=${histRow?.payload?.entries?.length} live.entries=${snapRow.payload.entries.length}`,
+        )
+        check('发布：访问指针置为 live', strict.states.get('u_selftest')?.state === 'live', `state=${strict.states.get('u_selftest')?.state}`)
+
+        const p0 = await previewPublish()
+        check('预览：内容未变时不报「有变化」', p0.hasChanges === false, p0.lines.join(' | ') || '无差异行')
+
+        const someEntry = (await db.entries.toArray())[0]
+        const originalTitle = someEntry.title
+        await db.entries.update(someEntry.id, { title: '改过的标题', updatedAt: nowISO() })
+        const p1 = await previewPublish()
+        check(
+          '预览：改动一条记录 → 记录「改 1」',
+          p1.diff.entries?.changed === 1 && p1.lines.some((l) => l.startsWith('记录')),
+          JSON.stringify(p1.diff.entries),
+        )
+
+        await publishToCloud()
+        check('再发布：版本历史累加一条', strict.history.size === history0 + 1, `history=${strict.history.size}`)
+
+        const firstPublishId = histRow.publish_id
+        const rb = await rollbackToVersion(firstPublishId)
+        const liveRow = [...strict.snapshots.values()][0]
+        check('回退：线上快照指回旧版本', liveRow.publish_id === firstPublishId && liveRow.is_live === true, `${liveRow.publish_id} live=${liveRow.is_live}`)
+        check(
+          '回退：内容恢复为旧标题',
+          liveRow.payload.entries.find((e) => e.id === someEntry.id)?.title === originalTitle,
+          `title=${liveRow.payload.entries.find((e) => e.id === someEntry.id)?.title}`,
+        )
+        check('回退：返回的条数与旧版本一致', rb.photos === liveRow.payload.photos.length, `photos=${rb.photos}`)
+        check('回退：访问指针仍为 live', strict.states.get('u_selftest')?.state === 'live')
+
+        // 防线：旧版本引用的图缺失时必须中止，不能把「记录回来了、图全破」的版本推上线
+        const lostPhoto = liveRow.payload.photos[0].id
+        const savedThumb = strict.media.get(`${lostPhoto}:thumb`)
+        strict.media.delete(`${lostPhoto}:thumb`)
+        let rbErr = null
+        try {
+          await rollbackToVersion([...strict.history.keys()][0])
+        } catch (e) {
+          rbErr = e
+        }
+        check('回退：旧版本缺图时中止（避免公网页破图）', Boolean(rbErr), rbErr ? String(rbErr.message).slice(0, 70) : '未抛出')
+        if (savedThumb) strict.media.set(`${lostPhoto}:thumb`, savedThumb)
+
+        await retractPublish('暂停一下')
+        const st1 = await currentPublishState()
+        const snapAfterRetract = [...strict.snapshots.values()][0]
+        check('撤回：访问指针变成 retracted', st1.state === 'retracted', `state=${st1.state}`)
+        check('撤回：快照下线（is_live=false）', snapAfterRetract.is_live === false, `is_live=${snapAfterRetract.is_live}`)
+        check('撤回：说明文字一并写入', st1.note === '暂停一下', `note=${st1.note}`)
+
+        await resumePublish()
+        const st2 = await currentPublishState()
+        check(
+          '重新上线：指针恢复 live 且快照重新可见',
+          st2.state === 'live' && [...strict.snapshots.values()][0].is_live === true,
+          `state=${st2.state}`,
+        )
+
+        /**
+         * 还原被改过的那条记录。
+         *
+         * 不加这一步，后面「拉取后游标前进」会失败：本步把 updatedAt 写成了「现在」，
+         * 下一次同步会把它推到模拟云端，游标于是跳到今天而不是测试基准时间。
+         * 测试之间必须互不污染，否则失败原因会指向错误的地方。
+         */
+        await db.entries.put(someEntry)
+
         /* 关键回归：部分照片失败时必须中止，不能发布出「记录新、图缺」的快照。
            旧实现只在「全部失败」时才中止，3/4 失败照样写快照，公网页会破图。
 
@@ -345,6 +461,80 @@
 
         __setPublishDbForTest(null)
         __skipPublishSessionForTest(false)
+      }
+
+      /**
+       * 冲突副本的取回与清理（R-008 收尾）。
+       * 放在最后执行：取回会把 updatedAt 写成「现在」，若在同步用例之前跑，
+       * 会把模拟云端的游标推到今天，让无关断言失败。
+       */
+      async function testConflictRestore() {
+        const person = (await db.persons.toArray())[0]
+        const base = { personId: person?.id ?? 'p_x', category: 'food', direction: 'like', evidenceEntryIds: [], createdAt: t0 }
+        await db.preferences.put({ ...base, id: 'pr_conf', name: '云端赢的版本', updatedAt: t0 })
+        const cid = `preferences:pr_conf:${t0}`
+        await db.conflicts.put({
+          id: cid,
+          entity: 'preferences',
+          rowId: 'pr_conf',
+          discardedUpdatedAt: t0,
+          keptUpdatedAt: new Date(Date.parse(t0) + 1000).toISOString(),
+          detectedAt: t0,
+          payload: { ...base, id: 'pr_conf', name: '被覆盖的版本', updatedAt: t0 },
+        })
+
+        const res = await restoreConflict(await db.conflicts.get(cid))
+        const after = await db.preferences.get('pr_conf')
+        check('冲突取回：把被覆盖的版本写回本机', res.ok && after?.name === '被覆盖的版本', after?.name ?? res.message)
+        check(
+          '冲突取回：时间戳改成现在（下一轮同步才能推上去）',
+          Boolean(after) && Date.parse(after.updatedAt) > Date.parse(t0),
+          after?.updatedAt,
+        )
+        const restored = await db.conflicts.get(cid)
+        check('冲突取回：副本标记为已处理', Boolean(restored?.dismissedAt && restored?.resolvedAt), `dismissed=${Boolean(restored?.dismissedAt)}`)
+
+        const photoRes = await restoreConflict({
+          id: 'photos:ph_x:1',
+          entity: 'photos',
+          rowId: 'ph_x',
+          discardedUpdatedAt: t0,
+          keptUpdatedAt: t0,
+          detectedAt: t0,
+          payload: { id: 'ph_x' },
+        })
+        check('冲突取回：照片不给取回（没有二进制，写回会指向不存在的图）', photoRes.ok === false, photoRes.message)
+
+        const old = new Date(Date.now() - 120 * 86_400_000).toISOString()
+        await db.conflicts.put({
+          id: 'c_old',
+          entity: 'entries',
+          rowId: 'e_old',
+          discardedUpdatedAt: old,
+          keptUpdatedAt: old,
+          detectedAt: old,
+          payload: { id: 'e_old' },
+          dismissedAt: old,
+        })
+        await db.conflicts.put({
+          id: 'c_pending',
+          entity: 'entries',
+          rowId: 'e_new',
+          discardedUpdatedAt: t0,
+          keptUpdatedAt: t0,
+          detectedAt: t0,
+          payload: { id: 'e_new' },
+        })
+        await dismissConflict(cid)
+
+        const removed = await cleanupConflicts()
+        const keptOld = await db.conflicts.get('c_old')
+        const keptPending = await db.conflicts.get('c_pending')
+        check(
+          '冲突清理：只删「已处理且超过保留期」的，未处理的绝不动',
+          removed === 1 && !keptOld && Boolean(keptPending),
+          `removed=${removed} old=${Boolean(keptOld)} pending=${Boolean(keptPending)}`,
+        )
       }
 
       async function main() {
@@ -916,6 +1106,8 @@
         __setSyncSessionForTest(undefined)
         await wipeAllData()
         await db.tombstones.clear()
+
+        await testConflictRestore()
 
         const failed = checks.filter((c) => !c.pass)
         window.__selftest = { done: true, total: checks.length, failed: failed.length, checks }

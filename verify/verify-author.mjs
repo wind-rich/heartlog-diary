@@ -97,6 +97,31 @@ if (/interface PublicTask|PublicTask\b/.test(viewerTypes)) {
   problems.push('展示端公开契约里出现了任务类型，违反 D-008 默认私有')
 }
 
+/* T4 撤回：访客端必须「先问访问指针再决定是否退回静态」，
+   否则作者撤回后访客看到的仍是构建时打进去的旧内容 —— 撤回等于没做。 */
+const viewerAppSrc = readFileSync(join(ROOT, 'src/viewer/ViewerApp.tsx'), 'utf8')
+// 默认分支里的静态回退是最后一次调用；前面还有显式 ?snapshot= 分支，不能取第一次
+const staticFallbackAt = viewerAppSrc.lastIndexOf('await loadStatic()')
+const stateCheckAt = viewerAppSrc.indexOf('fetchPublishState()')
+if (stateCheckAt < 0) {
+  problems.push('访客端没有读取访问指针（撤回后仍会回退到静态旧内容）')
+} else if (staticFallbackAt > 0 && stateCheckAt > staticFallbackAt) {
+  problems.push('访客端的撤回判断位于静态回退之后，等于没有生效')
+}
+if (!/status: 'offline'/.test(viewerAppSrc)) {
+  problems.push('访客端没有「已下线」状态，撤回后只能落到错误页或旧内容')
+}
+
+/* T4 版本历史：每次发布必须留一份可用于回退的 payload */
+if (!/PUBLISH_HISTORY_TABLE/.test(publishSrc) || !/async function rollbackToVersion|export async function rollbackToVersion/.test(publishSrc)) {
+  problems.push('发布链路缺少版本历史或回退实现（T4）')
+}
+
+/* 待办云写入自检：R-032 的一键验证入口必须存在 */
+if (!/export async function probeTaskCloudWrite/.test(taskSyncSrc)) {
+  problems.push('待办同步缺少云端写入自检（probeTaskCloudWrite）')
+}
+
 function detectChrome() {
   const c = [
     process.env.HL_CHROME,

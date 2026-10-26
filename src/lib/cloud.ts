@@ -71,6 +71,26 @@ type PublicMediaRowShape = {
   updated_at: string
 }
 
+/** 发布版本历史：每次发布留一份完整 payload，用于预览差异、回退与审计 */
+type PublishHistoryRowShape = {
+  owner_id: string
+  publish_id: string
+  payload: Record<string, unknown>
+  counts: Record<string, number>
+  published_at: string
+  kind: string
+  rolled_back_from: string | null
+  last_activated_at: string
+}
+
+/** 访问控制指针：访客先读它，`retracted` 时不再回退到静态旧内容 */
+type PublishStateRowShape = {
+  owner_id: string
+  state: string
+  note: string | null
+  updated_at: string
+}
+
 type HeartLogDatabase = {
   public: {
     Tables: {
@@ -125,6 +145,26 @@ type HeartLogDatabase = {
         Row: CloudBackupRow
         Insert: CloudBackupInsert
         Update: Partial<CloudBackupInsert>
+        Relationships: []
+      }
+      heartlog_publish_history: {
+        Row: PublishHistoryRowShape
+        Insert: {
+          publish_id: string
+          payload: Record<string, unknown>
+          counts?: Record<string, number>
+          published_at?: string
+          kind?: string
+          rolled_back_from?: string | null
+          last_activated_at?: string
+        }
+        Update: Partial<{ payload: Record<string, unknown>; counts: Record<string, number>; last_activated_at: string; kind: string }>
+        Relationships: []
+      }
+      heartlog_publish_state: {
+        Row: PublishStateRowShape
+        Insert: { state: string; note?: string | null; updated_at?: string }
+        Update: Partial<{ state: string; note: string | null; updated_at: string }>
         Relationships: []
       }
     }

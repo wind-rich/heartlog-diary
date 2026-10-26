@@ -33,6 +33,34 @@ export async function fetchCloudSnapshot(): Promise<PublishedSnapshot | null> {
   return snap
 }
 
+/**
+ * 访问控制指针。
+ *
+ * 只有「云端没有 live 快照」时才需要问它：作者撤回时会把快照下线，
+ * 同时把指针置成 `retracted`。没有这一步，访客端会退回构建时打进去的
+ * 静态快照——作者以为下线了，访客照样看得到。读失败按 none 处理（不阻塞展示）。
+ */
+export interface CloudPublishState {
+  state: 'live' | 'retracted' | 'none'
+  note: string
+}
+
+export async function fetchPublishState(): Promise<CloudPublishState> {
+  try {
+    const rows = await selectRows<{ state: string; note: string | null }>(
+      'heartlog_publish_state',
+      'select=state,note&limit=1',
+    )
+    if (!rows.length) return { state: 'none', note: '' }
+    return {
+      state: rows[0].state === 'retracted' ? 'retracted' : 'live',
+      note: rows[0].note ?? '',
+    }
+  } catch {
+    return { state: 'none', note: '' }
+  }
+}
+
 /** 一次性取回全部缩略图（图很小，一次拿完比 104 次请求快得多） */
 export async function fetchThumbMap(): Promise<Map<string, string>> {
   const rows = await selectRows<{ photo_id: string; data_b64: string; mime: string }>(

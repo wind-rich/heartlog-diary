@@ -1,5 +1,5 @@
 import JSZip from 'jszip'
-import { db, nowISO } from '../db/db'
+import { db, nowISO, setMeta } from '../db/db'
 import type {
   DailyStatus,
   Entry,
@@ -207,10 +207,22 @@ export async function createBackupZip(): Promise<{ blob: Blob; manifest: BackupM
   return { blob, manifest }
 }
 
+/**
+ * 本机完整导出的时间戳键。
+ *
+ * 存在的理由（R-026）：云端备份是**手工按钮**、没有任何定时任务，所以
+ * 「上次导出是什么时候」这个事实只能由导出动作自己记下来。没有它，
+ * 设置页无法判断「这份数据上次被保存到本机之外」是几天前，用户也就不会
+ * 因为「已经很久没导出」而被提醒。
+ */
+export const LAST_EXPORT_KEY = 'lastFullExportAt'
+
 export async function exportBackup(): Promise<void> {
   const { blob, manifest } = await createBackupZip()
   const stamp = manifest.exportedAt.slice(0, 19).replace(/[:T]/g, '-')
   downloadBlob(blob, `心意簿-完整备份-${stamp}.zip`)
+  // 先下载再记录：浏览器阻断下载时不该留下「已备份」的假记录
+  await setMeta(LAST_EXPORT_KEY, manifest.exportedAt)
 }
 
 /* ------------------------------------------------------------------ */

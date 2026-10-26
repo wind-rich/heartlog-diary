@@ -1,10 +1,28 @@
 import { useEffect, useState } from 'react'
-import { Cloud, Loader2, RefreshCw, AlertTriangle, Check, Trash2, Image as ImageIcon, RotateCcw } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  Cloud,
+  Image as ImageIcon,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { SectionCard, useToast, useConfirm } from './ui'
 import { getCloudSession } from '../lib/cloud'
 import { useAuthorReload } from '../viewer/author/AuthorReload'
 import { db } from '../db/db'
-import { conflictEntityLabel, conflictSummary, type ConflictCopy } from '../lib/conflicts'
+import {
+  cleanupConflicts,
+  conflictEntityLabel,
+  conflictSummary,
+  conflictTally,
+  dismissConflict,
+  restoreConflict,
+  type ConflictCopy,
+} from '../lib/conflicts'
 import {
   lastSyncedAt,
   pendingDeletionCount,
@@ -16,6 +34,7 @@ import {
   type SyncResult,
 } from '../lib/sync'
 import { fmtDate, parseAny, fmtTime } from '../lib/date'
+import { probeTaskCloudWrite, type TaskCloudProbeResult } from '../tasks/sync'
 
 const PHASE_TEXT: Record<SyncProgress['phase'], string> = {
   pull: '读取云端记录',
@@ -52,6 +71,10 @@ export function SyncPanel() {
   const [conflicts, setConflicts] = useState<ConflictCopy[]>([])
   const [showConflicts, setShowConflicts] = useState(false)
   const conflictCount = conflicts.length
+  const tally = conflictTally(conflicts)
+  /** 待办提醒云写入自检（R-032）：真实会话写两行再读回，结论分「能写回/只在本机」 */
+  const [probeBusy, setProbeBusy] = useState(false)
+  const [probe, setProbe] = useState<TaskCloudProbeResult | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -167,6 +190,46 @@ export function SyncPanel() {
     }
   }
 
+  async function refreshConflicts() {
+    setConflicts(await db.conflicts.orderBy('detectedAt').reverse().toArray())
+  }
+
+  /** 取回某一版：写回本机并标为已处理，下一次同步会把它推上去 */
+  async function doRestore(c: ConflictCopy) {
+    const ok = await confirm({
+      title: '取回这一版？',
+      desc: `会用「${conflictSummary(c)}」被覆盖前的内容替换本机现有版本。\n取回后请点一次「双向同步」，让其它设备也拿到这一版。`,
+    })
+    if (!ok) return
+    const res = await restoreConflict(c)
+    toast(res.message, res.ok ? 'ok' : 'err')
+    if (res.ok) {
+      await refreshConflicts()
+      await reload?.()
+    }
+  }
+
+  async function doDismiss(c: ConflictCopy) {
+    await dismissConflict(c.id)
+    await refreshConflicts()
+    toast('已标记为处理过，内容仍保留在副本里')
+  }
+
+  async function doCleanup() {
+    const n = await cleanupConflicts()
+    await refreshConflicts()
+    toast(n > 0 ? `已清理 ${n} 条已处理的副本` : '没有超过保留期的已处理副本')
+  }
+
+  async function doProbe() {
+    setProbeBusy(true)
+    try {
+      setProbe(await probeTaskCloudWrite())
+    } finally {
+      setProbeBusy(false)
+    }
+  }
+
   return (
     <SectionCard
       title={
@@ -257,7 +320,26 @@ export function SyncPanel() {
                     </div>
                     <div className="mt-0.5 text-[10.5px] text-ink-400">
                       被覆盖版本：{c.discardedUpdatedAt.slice(0, 16).replace('T', ' ')}
+                      {c.resolvedAt ? ' · 已取回' : c.dismissedAt ? ' · 已忽略' : ''}
                     </div>
+                    {!c.dismissedAt && (
+                      <div className="mt-1 flex gap-2">
+                        <button
+                          type="button"
+                          className="btn-text px-0 py-0 text-[11px]"
+                          onClick={() => void doRestore(c)}
+                        >
+                          取回这一版
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-text px-0 py-0 text-[11px] text-ink-400"
+                          onClick={() => void doDismiss(c)}
+                        >
+                          忽略
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
                 {conflicts.length > 20 && (
@@ -265,8 +347,48 @@ export function SyncPanel() {
                 )}
               </ul>
             )}
+            {tally.handled > 0 && (
+              <button
+                type="button"
+                className="btn-text mt-1.5 px-0 py-0 text-[11px] text-ink-400"
+                onClick={() => void doCleanup()}
+              >
+                清理已处理的 {tally.handled} 条（保留 90 天内）
+              </button>
+            )}
           </div>
         )}
+        {/* 待办提醒能否跨设备：用真实会话写两行再读回，比「应该可以」可靠 */}
+        <div className="rounded-lg border border-cream-200 bg-cream-50 px-3 py-2 text-[11.5px] leading-relaxed text-ink-600">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1">
+              <ShieldCheck size={13} className="text-rose-deep" />
+              待办提醒能不能跟着账号走？
+            </span>
+            <button
+              type="button"
+              className="btn-text px-0 py-0 text-[11.5px]"
+              onClick={() => void doProbe()}
+              disabled={probeBusy || signedIn !== true}
+            >
+              {probeBusy ? '检查中…' : '运行一次自检'}
+            </button>
+          </div>
+          {probe && (
+            <p className={`mt-1 ${probe.ok ? 'text-[#4F6B45]' : 'text-[#8E4850]'}`}>
+              {probe.message}
+              {probe.lines.length > 0 && (
+                <span className="ml-1 text-ink-400">
+                  （
+                  {probe.lines.map((l) => `${l.entity} ${l.readBack ? '可写回' : '未通过'}`).join(' / ')}
+                  ）
+                </span>
+              )}
+            </p>
+          )}
+          {!probe && <p className="mt-1 text-ink-400">会写两行探针再读回并标删，不会碰你的真实任务。</p>}
+        </div>
+
         <div>
           <button
             type="button"

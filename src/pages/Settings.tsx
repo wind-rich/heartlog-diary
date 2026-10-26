@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Cloud,
   Database,
-  Download,
   HardDrive,
   Image as ImageIcon,
   Info,
@@ -20,10 +19,11 @@ import {
 } from 'lucide-react'
 import { aiChat, aiReady, listCloudModels, type CloudModelOption } from '../lib/ai'
 import { db } from '../db/db'
-import { exportBackup, importBackupZip, storageEstimate, wipeAllData, type ImportMode, type ImportResult } from '../lib/backup'
+import { importBackupZip, storageEstimate, wipeAllData, type ImportMode, type ImportResult } from '../lib/backup'
 import { fmtSize } from '../lib/photo'
 import { Field, Modal, SectionCard, Segmented, Switch, Tag, useConfirm, useToast } from '../components/ui'
 import { CloudPanel } from '../components/CloudPanel'
+import { BackupHealth } from '../components/BackupHealth'
 import { SyncPanel } from '../components/SyncPanel'
 import { PublishPanel } from '../components/PublishPanel'
 import { useApp } from '../state/app'
@@ -50,7 +50,6 @@ export default function SettingsPage() {
   const [importMode, setImportMode] = useState<ImportMode>('merge')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
-  const [backupBusy, setBackupBusy] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
   const [online, setOnline] = useState(navigator.onLine)
 
@@ -109,18 +108,6 @@ export default function SettingsPage() {
       setTestResult({ ok: false, msg: `${err.message}${err.detail ? `\n${err.detail}` : ''}` })
     } finally {
       setTesting(false)
-    }
-  }
-
-  const doBackup = async () => {
-    setBackupBusy(true)
-    try {
-      await exportBackup()
-      toast('完整备份已开始下载')
-    } catch (e) {
-      toast(`备份失败：${(e as Error).message}`, 'err')
-    } finally {
-      setBackupBusy(false)
     }
   }
 
@@ -352,11 +339,12 @@ export default function SettingsPage() {
           <b className="text-ink-700">photos/</b>（照片原图与缩略图）。清空浏览器数据会丢失记录，所以建议定期备份。
         </div>
 
+        {/* 备份体检：把「上次导出是几天前」变成看得见的信号，而不是靠记性 */}
+        <div className="mb-3">
+          <BackupHealth />
+        </div>
+
         <div className="flex flex-col gap-2">
-          <button className="btn-primary" onClick={doBackup} disabled={backupBusy}>
-            {backupBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            导出完整备份（ZIP）
-          </button>
           <button className="btn-ghost" onClick={() => setImportOpen(true)}>
             <Upload size={16} /> 从备份恢复
           </button>

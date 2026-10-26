@@ -58,6 +58,7 @@
         syncTasks,
         pushTasksToCloud,
         pullTasksFromCloud,
+        probeTaskCloudWrite,
         __setTaskCloudForTest,
         __setTaskSessionForTest,
       } from '/src/tasks/sync.ts'
@@ -678,6 +679,43 @@
         check('没有备注时正文有兜底文案而不是空串', Boolean(e5?.content && e5.content.trim().length > 0), e5?.content ?? '')
       }
 
+      /* ================================================================ */
+      /* 13) 云端写入自检：提醒计划 / 发生实例能不能真的写进云端（R-032）    */
+      /* ================================================================ */
+      async function testCloudProbe() {
+        __setTaskCloudForTest(mockCloud)
+        __setTaskSessionForTest({ user: { id: 'u_test' } })
+
+        const before = remote.size
+        const res = await probeTaskCloudWrite()
+        check(
+          '自检：提醒与实例都能写入并读回',
+          res.ok === true && res.lines.length === 2 && res.lines.every((l) => l.wrote && l.readBack),
+          res.message,
+        )
+        check(
+          '自检：云端确实出现了 taskReminders 与 taskOccurrences 行',
+          remote.has('taskReminders:__probe_task_reminder__') && remote.has('taskOccurrences:__probe_task_occurrence__'),
+          `新增 ${remote.size - before} 行`,
+        )
+        const rem = remote.get('taskReminders:__probe_task_reminder__')
+        const occ = remote.get('taskOccurrences:__probe_task_occurrence__')
+        check('自检：结束时把探针标成删除（不在云端留活提醒）', rem?.deleted === true && occ?.deleted === true, `rem=${rem?.deleted} occ=${occ?.deleted}`)
+        check('自检：探针沿用固定 id，反复自检不堆垃圾', remote.has('taskReminders:__probe_task_reminder__'), '固定 row_id')
+
+        // 未登录时必须如实说「只在本机」，不能假装成功
+        __setTaskSessionForTest(null)
+        const res2 = await probeTaskCloudWrite()
+        check(
+          '自检：未登录时明确说明提醒只留在这台设备',
+          res2.ok === false && res2.signedIn === false && res2.lines.length === 0,
+          res2.message,
+        )
+
+        __setTaskSessionForTest(undefined)
+        __setTaskCloudForTest(null)
+      }
+
       async function main() {
         await wipeAllData()
         await db.tombstones.clear()
@@ -701,6 +739,7 @@
         await testSummary()
         await testBackupCompat()
         await testMakePublic()
+        await testCloudProbe()
 
         const failed = checks.filter((c) => !c.pass)
         window.__taskselftest = { done: true, total: checks.length, failed: failed.length, checks }

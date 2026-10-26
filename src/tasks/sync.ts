@@ -371,6 +371,134 @@ export async function syncTasks(): Promise<TaskSyncResult> {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* 云端写入自检（R-032）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 提醒计划 / 发生实例能不能真的写进云端？
+ *
+ * 这三类实体共用一张 `heartlog_sync_rows`，用一个 `entity` 列区分，表上只有
+ * `owner_id = auth.uid()` 一条策略、没有实体白名单约束 —— 所以「数据库是否
+ * 允许 taskReminders」在结构上不是问题，真正的未知是**这台设备当前的登录会话
+ * 能不能把这两类行写进去并读回来**。
+ *
+ * 自检做的事就是用真实会话写两行、读回、再把它们标记成已删除：
+ * - 固定 row_id，反复自检不会在云端堆垃圾；
+ * - `__probe__` 前缀与真实任务 id 不冲突，也不会被任务列表当成真任务；
+ * - 结束时写成 `deleted: true`，云端不会把它当成活的提醒计划。
+ *
+ * 这不是测试代码：用户换机、换账号、网络异常后都可以一键确认
+ * 「提醒到底有没有跟着账号走」。
+ */
+const PROBE_REMINDER_ID = '__probe_task_reminder__'
+const PROBE_OCCURRENCE_ID = '__probe_task_occurrence__'
+
+export interface TaskCloudProbeLine {
+  entity: string
+  wrote: boolean
+  readBack: boolean
+  error?: string
+}
+
+export interface TaskCloudProbeResult {
+  ok: boolean
+  signedIn: boolean
+  at: string
+  lines: TaskCloudProbeLine[]
+  message: string
+}
+
+export async function probeTaskCloudWrite(): Promise<TaskCloudProbeResult> {
+  const at = nowISO()
+  const session = sessionOverride !== undefined ? sessionOverride : await getCloudSession()
+  if (!session?.user?.id) {
+    return { ok: false, signedIn: false, at, lines: [], message: '还没有登录云端：提醒只会留在这台设备上' }
+  }
+
+  const probe: { entity: TaskEntity; rowId: string; payload: Record<string, unknown> }[] = [
+    {
+      entity: 'taskReminders',
+      rowId: PROBE_REMINDER_ID,
+      payload: {
+        id: PROBE_REMINDER_ID,
+        taskId: '__probe__',
+        mode: 'absolute',
+        at,
+        enabled: true,
+        rev: 1,
+        createdAt: at,
+        updatedAt: at,
+      },
+    },
+    {
+      entity: 'taskOccurrences',
+      rowId: PROBE_OCCURRENCE_ID,
+      payload: {
+        id: PROBE_OCCURRENCE_ID,
+        taskId: '__probe__',
+        reminderId: PROBE_REMINDER_ID,
+        slotAt: at,
+        firedAt: at,
+        readAt: at,
+      },
+    },
+  ]
+
+  const lines: TaskCloudProbeLine[] = []
+  for (const p of probe) {
+    const line: TaskCloudProbeLine = { entity: p.entity, wrote: false, readBack: false }
+    try {
+      const { error } = await activeCloud.database.from(SYNC_TABLE).upsert(
+        [{ entity: p.entity, row_id: p.rowId, updated_at: at, deleted: false, payload: p.payload }],
+        { onConflict: 'owner_id,entity,row_id' },
+      )
+      if (error) throw new Error(error.message)
+      line.wrote = true
+
+      // 只按 row_id 过滤（构造器只保证单列 eq）；entity 在本地再判一次
+      const { data, error: readErr } = await activeCloud.database
+        .from(SYNC_TABLE)
+        .select('entity,row_id,deleted,payload')
+        .eq('row_id', p.rowId)
+        .limit(1)
+      if (readErr) throw new Error(readErr.message)
+      const row = ((data ?? []) as { entity: string; row_id: string; deleted: boolean; payload: Record<string, unknown> }[]).find(
+        (r) => r.entity === p.entity && r.row_id === p.rowId,
+      )
+      line.readBack = Boolean(row && !row.deleted && row.payload && String(row.payload.id ?? '') === p.rowId)
+      if (!line.readBack) line.error = '写入后读不回来（可能被别的策略挡住）'
+    } catch (err) {
+      line.error = (err as Error).message
+    }
+    lines.push(line)
+  }
+
+  // 收尾：标成删除，别在云端留一条「活的提醒」
+  for (const p of probe) {
+    try {
+      await activeCloud.database.from(SYNC_TABLE).upsert(
+        [{ entity: p.entity, row_id: p.rowId, updated_at: nowISO(), deleted: true, payload: {} }],
+        { onConflict: 'owner_id,entity,row_id' },
+      )
+    } catch {
+      // 清理失败不影响自检结论
+    }
+  }
+
+  const ok = lines.every((l) => l.wrote && l.readBack)
+  const bad = lines.filter((l) => !l.wrote || !l.readBack)
+  return {
+    ok,
+    signedIn: true,
+    at,
+    lines,
+    message: ok
+      ? '提醒计划与发生实例都能写进云端并读回，换设备登录同一账号即可带走'
+      : `有 ${bad.length} 类写入失败：${bad.map((b) => `${b.entity}（${b.error ?? '未知原因'}）`).join('；')}`,
+  }
+}
+
 /** 离线队列规模：本地 rev 与最后一次成功同步时的快照差异（用于「待同步」状态展示） */
 export async function pendingTaskChanges(lastSyncedRev: Record<string, number>): Promise<number> {
   let dirty = 0
