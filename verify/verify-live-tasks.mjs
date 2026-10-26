@@ -171,7 +171,7 @@ try {
     const base = authorScript.replace(/[^/]+$/, '')
     // 名字里带 hash，只能从 author bundle 里抽
     const code = await (await fetch(authorScript)).text()
-    const names = [...new Set((code.match(/Tasks-[A-Za-z0-9_-]+\\.js|TaskBell-[A-Za-z0-9_-]+\\.js|TaskSummaryCard-[A-Za-z0-9_-]+\\.js/g) || []))]
+    const names = [...new Set((code.match(/Tasks-[A-Za-z0-9_-]+\\.js|TaskBell-[A-Za-z0-9_-]+\\.js|TaskSummaryCard-[A-Za-z0-9_-]+\\.js|Memoir-[A-Za-z0-9_-]+\\.js/g) || []))]
     const results = []
     for (const n of names) {
       const res = await fetch(base + n)
