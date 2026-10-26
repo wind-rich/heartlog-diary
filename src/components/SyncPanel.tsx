@@ -3,6 +3,8 @@ import { Cloud, Loader2, RefreshCw, AlertTriangle, Check, Trash2, Image as Image
 import { SectionCard, useToast, useConfirm } from './ui'
 import { getCloudSession } from '../lib/cloud'
 import { useAuthorReload } from '../viewer/author/AuthorReload'
+import { db } from '../db/db'
+import { conflictEntityLabel, conflictSummary, type ConflictCopy } from '../lib/conflicts'
 import {
   lastSyncedAt,
   pendingDeletionCount,
@@ -46,6 +48,10 @@ export function SyncPanel() {
   const [result, setResult] = useState<SyncResult | null>(null)
   const [pushedOnly, setPushedOnly] = useState<Awaited<ReturnType<typeof pushLocalToCloud>> | null>(null)
   const [err, setErr] = useState('')
+  /** 冲突副本：同步时「较旧那次被覆盖」留下的备份，默认折叠 */
+  const [conflicts, setConflicts] = useState<ConflictCopy[]>([])
+  const [showConflicts, setShowConflicts] = useState(false)
+  const conflictCount = conflicts.length
 
   useEffect(() => {
     let alive = true
@@ -53,11 +59,13 @@ export function SyncPanel() {
       const session = await getCloudSession()
       const at = await lastSyncedAt()
       const pending = await pendingDeletionCount()
+      const pendingConflicts = await db.conflicts.orderBy('detectedAt').reverse().toArray()
       if (!alive) return
       setSignedIn(session !== null)
       setAccount(session?.user?.email || session?.user?.name || '')
       setLastAt(at)
       setPendingDeletes(pending)
+      setConflicts(pendingConflicts)
     })()
     return () => {
       alive = false
@@ -77,6 +85,7 @@ export function SyncPanel() {
       setPushedOnly(res)
       setLastAt(res.lastSyncedAt)
       setPendingDeletes(await pendingDeletionCount())
+      setConflicts(await db.conflicts.orderBy('detectedAt').reverse().toArray())
       await reload?.()
       toast(
         res.heldBack > 0
@@ -113,6 +122,7 @@ export function SyncPanel() {
       setResult(res)
       setLastAt(res.lastSyncedAt)
       setPendingDeletes(await pendingDeletionCount())
+      setConflicts(await db.conflicts.orderBy('detectedAt').reverse().toArray())
       // 拉到的内容写进了本机库，必须让页面重读，否则界面还是同步前的样子
       await reload?.()
       toast(`同步完成：上传 ${res.pushed} 条，更新本机 ${res.pulled} 条`)
@@ -146,6 +156,7 @@ export function SyncPanel() {
       setResult(res)
       setLastAt(res.lastSyncedAt)
       setPendingDeletes(await pendingDeletionCount())
+      setConflicts(await db.conflicts.orderBy('detectedAt').reverse().toArray())
       await reload?.()
       toast(`已重新比对：更新本机 ${res.pulled} 条`)
     } catch (e) {
@@ -217,6 +228,45 @@ export function SyncPanel() {
           「双向同步」是合并：同一条两边都改过时保留较新的那次，不会用本机旧内容覆盖云端。
           只有确认云端才是旧版本时，才用下面的强制覆盖。
         </p>
+
+        {conflictCount > 0 && (
+          <div className="rounded-lg border border-[#E8D5C4] bg-[#FDF7F1] px-3 py-2 text-[12px]">
+            <div className="flex items-center gap-1.5 text-[#8E4850]">
+              <AlertTriangle size={13} />
+              有 {conflictCount} 条冲突副本待查看
+            </div>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-600">
+              这些是「两边都改过、较旧的那次被覆盖」时自动留下的备份，可以取回或忽略。
+            </p>
+            <button
+              type="button"
+              className="btn-text mt-1.5 px-0 py-0 text-[11.5px]"
+              onClick={() => setShowConflicts((v) => !v)}
+            >
+              {showConflicts ? '收起' : '查看冲突副本'}
+            </button>
+            {showConflicts && (
+              <ul className="mt-2 space-y-1.5">
+                {conflicts.slice(0, 20).map((c) => (
+                  <li key={c.id} className="rounded-md bg-white/70 px-2 py-1.5 text-[11.5px] text-ink-700">
+                    <div className="flex items-start gap-2">
+                      <span className="shrink-0 rounded bg-cream-200 px-1 text-[10.5px] text-ink-600">
+                        {conflictEntityLabel(c.entity)}
+                      </span>
+                      <span className="min-w-0 flex-1 break-all">{conflictSummary(c)}</span>
+                    </div>
+                    <div className="mt-0.5 text-[10.5px] text-ink-400">
+                      被覆盖版本：{c.discardedUpdatedAt.slice(0, 16).replace('T', ' ')}
+                    </div>
+                  </li>
+                ))}
+                {conflicts.length > 20 && (
+                  <li className="text-[10.5px] text-ink-400">另有 {conflicts.length - 20} 条…</li>
+                )}
+              </ul>
+            )}
+          </div>
+        )}
         <div>
           <button
             type="button"

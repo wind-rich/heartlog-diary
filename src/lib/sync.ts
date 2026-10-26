@@ -14,6 +14,7 @@ import type { Table } from 'dexie'
 import { db, getMetaValue, nowISO, setMeta } from '../db/db'
 import { cloud, getCloudSession } from './cloud'
 import { flush as flushTombstones, withDeletionsSuppressed } from './tombstones'
+import type { ConflictCopy } from './conflicts'
 
 export const SYNC_TABLE = 'heartlog_sync_rows'
 export const SYNC_CURSOR_KEY = 'cloudSyncCursor'
@@ -67,6 +68,8 @@ export interface SyncResult {
   photoErrors: string[]
   /** 因「云端更新、本机较旧」而被挡下未上传的条数（防覆盖） */
   heldBack?: number
+  /** 本次同步中，本机版本被云端版本覆盖前留存了副本的条数（真冲突） */
+  conflicts?: number
   lastSyncedAt: string
 }
 
@@ -410,6 +413,68 @@ async function pushDeletions(opts: SyncOptions): Promise<number> {
 /* 下行                                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 两端内容是否真的不同。
+ *
+ * 只比业务字段，跳过 `updatedAt` / `createdAt` 这类每次写入都会变的时间戳，
+ * 否则「本机只是时间旧、内容一样」也会被记成冲突，把冲突表塞满噪音。
+ */
+function payloadDiffers(local: Record<string, unknown>, remote: Record<string, unknown>): boolean {
+  const skip = new Set(['updatedAt', 'createdAt', 'id'])
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)])
+  for (const k of keys) {
+    if (skip.has(k)) continue
+    const a = local[k]
+    const b = remote[k]
+    // 二进制字段不参与比较（照片冲突按行处理，二进制以云端为准）
+    if (a instanceof Blob || b instanceof Blob) continue
+    const sa = stableStringify(a)
+    const sb = stableStringify(b)
+    if (sa !== sb) return true
+  }
+  return false
+}
+
+/** 键序无关的稳定序列化，避免对象键顺序不同被误判为内容不同 */
+function stableStringify(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`
+  const obj = v as Record<string, unknown>
+  const keys = Object.keys(obj).sort()
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`
+}
+
+/** 把即将被覆盖的本机版本存进冲突表；只留业务字段，二进制不入库 */
+async function saveConflict(
+  entity: string,
+  rowId: string,
+  local: Record<string, unknown>,
+  keptAt: number,
+): Promise<void> {
+  try {
+    const discardedAt = String(local.updatedAt ?? local.createdAt ?? '')
+    if (!discardedAt) return
+    const payload: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(local)) {
+      if (k === 'blob' || k === 'thumb') continue
+      payload[k] = v
+    }
+    const record: ConflictCopy = {
+      id: `${entity}:${rowId}:${discardedAt}`,
+      entity,
+      rowId,
+      discardedUpdatedAt: discardedAt,
+      keptUpdatedAt: new Date(keptAt).toISOString(),
+      detectedAt: nowISO(),
+      payload,
+    }
+    await db.conflicts.put(record as never)
+  } catch {
+    // 冲突副本是"尽力而为"的附加保护，写失败不能影响同步主流程
+  }
+}
+
 async function applyRemoteDeletion(entity: string, rowId: string, at: number): Promise<boolean> {
   const table = tableOf(entity)
   if (!table) return false
@@ -426,13 +491,39 @@ async function pullSince(
   cursor: string,
   opts: SyncOptions,
   uid: string,
-): Promise<{ pulled: number; keptLocal: number; deleted: number; photosDownloaded: number; photoErrors: string[]; latest: string }> {
+): Promise<{ pulled: number; keptLocal: number; deleted: number; photosDownloaded: number; photoErrors: string[]; latest: string; conflicts: number }> {
   let pulled = 0
   let keptLocal = 0
   let deleted = 0
+  let conflicts = 0
   let photosDownloaded = 0
   const photoErrors: string[] = []
   let latest = cursor
+
+  /**
+   * 分页取全，不用「一个足够大的 limit」。
+   *
+   * limit 2000 / 5000 这类写法是隐性上限：数据一旦超出，多出来的行被静默截断，
+   * 没有任何报错，表现就是「某些内容永远不同步」。用 range 按页取到不满一页为止。
+   */
+  async function fetchPaged(filterDeleted?: boolean): Promise<SyncRow[]> {
+    const PAGE = 1000
+    const MAX = 200_000 // 防御性上限；真到这个量级应改设计，而不是凭感觉调大数字
+    const all: SyncRow[] = []
+    for (let offset = 0; offset < MAX; offset += PAGE) {
+      let q = activeCloud.database
+        .from(SYNC_TABLE)
+        .select('entity,row_id,updated_at,deleted,payload')
+        .order('updated_at', { ascending: true })
+      if (filterDeleted) q = q.eq('deleted', true) as typeof q
+      const { data, error } = await q.range(offset, offset + PAGE - 1)
+      if (error) throw new SyncError(dbErrorText(error, '读取云端记录失败'))
+      const page = (data ?? []) as SyncRow[]
+      all.push(...page)
+      if (page.length < PAGE) break
+    }
+    return all
+  }
 
   /**
    * 删除指针必须**不受游标限制**地全量拉取。
@@ -440,21 +531,9 @@ async function pullSince(
    * 为什么：删除是「一次性凭证」，漏一次就永远漏 —— 漏掉之后本机那行还在，
    * 下次上行又会把它推回云端，表现为「电脑删了、手机同步后还看得见」。
    * 而游标一旦被推到墓碑之后（旧版本在空拉时把游标写成本机 now 就会这样），
-   * 这条墓碑就再也读不到了。删除行数量很少（当前个位数），全量取不会成为负担。
+   * 这条墓碑就再也读不到了。
    */
-  const delRes = await activeCloud.database
-    .from(SYNC_TABLE)
-    .select('entity,row_id,updated_at,deleted,payload')
-    .eq('deleted', true)
-    .limit(2000)
-  if (delRes.error) throw new SyncError(dbErrorText(delRes.error, '读取云端删除记录失败'))
-  const deletionRows = (delRes.data ?? []) as SyncRow[]
-
-  let query = activeCloud.database
-    .from(SYNC_TABLE)
-    .select('entity,row_id,updated_at,deleted,payload')
-    .order('updated_at', { ascending: true })
-    .limit(5000)
+  const deletionRows = await fetchPaged(true)
 
   /**
    * 全量比对，不用游标。
@@ -465,16 +544,14 @@ async function pullSince(
    * 而且点多少次同步都补不回来 —— 用户看到的就是「另一台明明传上去了，这边一直没有」，
    * 而且这个洞一旦形成就无法自愈（healFutureCursor 只能识别未来时间，识别不了这种）。
    *
-   * 当前云端总量 158 行、上限 5000，全量比对的开销远小于「数据静默不同步」的代价。
    * 合并规则本身是幂等的（较新者胜），重复拉取不会产生副作用。
    * cursor 入参保留但不参与过滤，仅为兼容调用方签名与进度显示。
    */
   void cursor
 
-  const { data, error } = await query
-  if (error) throw new SyncError(dbErrorText(error, '读取云端记录失败'))
+  const incremental = await fetchPaged()
 
-  // 删除标记单独全量取过（不受时间过滤），与增量结果合并去重
+  // 删除标记单独全量取过（不受时间过滤），与全量结果合并去重
   const seen = new Set<string>()
   const rows: SyncRow[] = []
   for (const r of deletionRows) {
@@ -483,7 +560,6 @@ async function pullSince(
     seen.add(key)
     rows.push(r)
   }
-  const incremental = (data ?? []) as SyncRow[]
   for (const r of incremental) {
     const key = `${r.entity}:${r.row_id}`
     if (seen.has(key)) continue
@@ -535,6 +611,12 @@ async function pullSince(
     }
 
     if (!local || remoteTime > rowTime(local)) {
+      // 覆盖前先留一份本机版本：这是"较新者胜"唯一会丢东西的地方。
+      // local 比云端旧但仍被改过，说明两端都动过，属于真冲突。
+      if (local && payloadDiffers(local, payload)) {
+        await saveConflict(row.entity, row.row_id, local, remoteTime)
+        conflicts++
+      }
       await table.put({ ...payload, id: row.row_id })
       pulled++
     } else {
@@ -544,7 +626,7 @@ async function pullSince(
     opts.onProgress?.({ phase: 'pull', done, total: rows.length })
   }
 
-  return { pulled, keptLocal, deleted, photosDownloaded, photoErrors, latest }
+  return { pulled, keptLocal, deleted, photosDownloaded, photoErrors, latest, conflicts }
 }
 
 /* ------------------------------------------------------------------ */
@@ -618,6 +700,7 @@ export async function runSync(opts: SyncOptions = {}): Promise<SyncResult> {
     photosDownloaded: pulled.photosDownloaded,
     photoErrors: [...pulled.photoErrors, ...pushed.photoErrors],
     heldBack: pushed.heldBack,
+    conflicts: pulled.conflicts,
     lastSyncedAt: doneAt,
   }
 }
@@ -665,6 +748,7 @@ export async function pullFromCloud(opts: SyncOptions = {}): Promise<{
   deleted: number
   photosDownloaded: number
   photoErrors: string[]
+  conflicts: number
   lastSyncedAt: string
 }> {
   const uid = await requireUid()
@@ -681,6 +765,7 @@ export async function pullFromCloud(opts: SyncOptions = {}): Promise<{
     deleted: res.deleted,
     photosDownloaded: res.photosDownloaded,
     photoErrors: res.photoErrors,
+    conflicts: res.conflicts,
     lastSyncedAt: doneAt,
   }
 }

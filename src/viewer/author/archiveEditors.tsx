@@ -31,11 +31,13 @@ import type {
   EvidenceType,
   HealthRecord,
   HealthStatus,
+  Mood,
   PreferenceDirection,
   WishStatus,
 } from '../../db/types'
 import type {
   PublicAnniversary,
+  PublicDailyStatus,
   PublicGift,
   PublicHealth,
   PublicInsight,
@@ -45,7 +47,7 @@ import type {
   SummaryKind,
 } from '../types'
 
-export type ArchiveKind = 'preference' | 'wish' | 'gift' | 'health' | 'insight' | 'anniversary' | 'summary'
+export type ArchiveKind = 'preference' | 'wish' | 'gift' | 'health' | 'insight' | 'anniversary' | 'summary' | 'status'
 
 export type ArchiveRow =
   | PublicPreference
@@ -55,6 +57,7 @@ export type ArchiveRow =
   | PublicInsight
   | PublicAnniversary
   | PublicSummary
+  | PublicDailyStatus
 
 export interface ArchiveEditorProps {
   open: boolean
@@ -842,6 +845,152 @@ function SummaryForm({ open, personId, row, onClose, onSaved }: ArchiveEditorPro
 }
 
 /* ------------------------------------------------------------------ */
+/* 每日状态                                                            */
+/* ------------------------------------------------------------------ */
+
+const STATUS_MOODS: { key: Mood; label: string }[] = [
+  { key: 'happy', label: '开心' },
+  { key: 'calm', label: '平静' },
+  { key: 'low', label: '低落' },
+  { key: 'anxious', label: '焦虑' },
+  { key: 'angry', label: '生气' },
+]
+
+function StatusForm({ open, personId, row, onClose, onSaved }: ArchiveEditorProps) {
+  const seed = row as PublicDailyStatus | undefined
+  const [date, setDate] = useState('')
+  const [mood, setMood] = useState<Mood | undefined>(undefined)
+  const [moodLevel, setMoodLevel] = useState<number | undefined>(undefined)
+  const [energy, setEnergy] = useState<number | undefined>(undefined)
+  const [sleepHours, setSleepHours] = useState<string>('')
+  const [goodThing, setGoodThing] = useState('')
+  const [worry, setWorry] = useState('')
+  const [note, setNote] = useState('')
+  const { saving, run } = useSaver(onSaved, onClose)
+
+  useEffect(() => {
+    if (!open) return
+    setDate(seed?.date || localDate())
+    setMood(seed?.mood)
+    setMoodLevel(seed?.moodLevel)
+    setEnergy(seed?.energy)
+    setSleepHours(seed?.sleepHours === undefined ? '' : String(seed.sleepHours))
+    setGoodThing(seed?.goodThing ?? '')
+    setWorry(seed?.worry ?? '')
+    setNote(seed?.note ?? '')
+  }, [open, seed])
+
+  const sleepNum = sleepHours.trim() === '' ? undefined : Number(sleepHours)
+  const sleepInvalid = sleepNum !== undefined && (!Number.isFinite(sleepNum) || sleepNum < 0 || sleepNum > 24)
+
+  function save() {
+    if (!date || sleepInvalid) return
+    void run(async () => {
+      const payload = {
+        personId,
+        date,
+        mood,
+        moodLevel,
+        energy,
+        sleepHours: sleepNum,
+        goodThing: goodThing.trim() || undefined,
+        worry: worry.trim() || undefined,
+        note: note.trim() || undefined,
+      }
+      const table = db.table('dailyStatus')
+      if (seed) {
+        await table.update(seed.id, { ...payload, updatedAt: nowISO() })
+      } else {
+        const at = nowISO()
+        await table.put({ ...payload, id: uid('ds'), createdAt: at, updatedAt: at } as never)
+      }
+    }, seed ? '已保存' : '已添加')
+  }
+
+  return (
+    <FormShell
+      open={open}
+      title={seed ? '编辑每日状态' : '新增每日状态'}
+      onClose={onClose}
+      onSave={save}
+      saving={saving}
+      disabled={!date || sleepInvalid}
+    >
+      <Field label="日期">
+        <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </Field>
+
+      <Field label="心情">
+        <div className="flex flex-wrap gap-1.5">
+          {STATUS_MOODS.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setMood(mood === m.key ? undefined : m.key)}
+              className={
+                mood === m.key
+                  ? 'rounded-full bg-rose-deep px-3 py-1 text-[12.5px] text-white'
+                  : 'rounded-full bg-cream-200 px-3 py-1 text-[12.5px] text-ink-700'
+              }
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="心情强度" hint="1~5">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={5}
+            value={moodLevel ?? ''}
+            onChange={(e) => setMoodLevel(e.target.value === '' ? undefined : Number(e.target.value))}
+          />
+        </Field>
+        <Field label="精力" hint="1~5">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={5}
+            value={energy ?? ''}
+            onChange={(e) => setEnergy(e.target.value === '' ? undefined : Number(e.target.value))}
+          />
+        </Field>
+      </div>
+
+      <Field label="睡眠小时" hint={sleepInvalid ? '请填 0~24 之间的数字' : '可留空'}>
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={24}
+          step="0.5"
+          value={sleepHours}
+          onChange={(e) => setSleepHours(e.target.value)}
+          placeholder="比如 7.5"
+        />
+      </Field>
+
+      <Field label="今天的好事">
+        <textarea className="input" rows={2} value={goodThing} onChange={(e) => setGoodThing(e.target.value)} />
+      </Field>
+
+      <Field label="烦心事">
+        <textarea className="input" rows={2} value={worry} onChange={(e) => setWorry(e.target.value)} />
+      </Field>
+
+      <Field label="备注">
+        <textarea className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+    </FormShell>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* 分发入口                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -861,6 +1010,8 @@ export function ArchiveItemEditor(props: ArchiveEditorProps) {
       return <AnniversaryForm {...props} />
     case 'summary':
       return <SummaryForm {...props} />
+    case 'status':
+      return <StatusForm {...props} />
     default:
       return null
   }
@@ -878,6 +1029,7 @@ const DELETE_TEXT: Record<ArchiveKind, { title: string; desc: string; noun: stri
   insight: { noun: '画像条目', title: '删除这条画像？', desc: '删除后无法撤销；依据的记录本身不会删除。' },
   anniversary: { noun: '纪念日', title: '删除这个纪念日？', desc: '删除后无法撤销，首页与档案的天数计算会一起更新。' },
   summary: { noun: '回顾', title: '删除这份回顾？', desc: '删除后无法撤销；引用的记录本身不会删除。' },
+  status: { noun: '每日状态', title: '删除这条每日状态？', desc: '删除后无法撤销；当天的记录本身不会删除。' },
 }
 
 export function ArchiveDeleteButton({
@@ -915,6 +1067,7 @@ export function ArchiveDeleteButton({
       } else if (kind === 'health') await healthRepo.remove(id)
       else if (kind === 'insight') await insightRepo.remove(id)
       else if (kind === 'summary') await summaryRepo.remove(id)
+      else if (kind === 'status') await db.dailyStatus.delete(id)
       else if (kind === 'anniversary') {
         const { id: pid, list } = await readPersonAnniversaries(personId)
         await savePerson({ id: pid, anniversaries: list.filter((a) => a.id !== id) })

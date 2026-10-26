@@ -760,6 +760,101 @@
         await db.preferences.delete('pr_behind_now')
         remote.delete('preferences:pr_behind_now')
 
+        // 10.96) 回归：冲突时必须留下被覆盖版本副本
+        //        旧行为是「较新者胜」静默丢弃较早那次修改，用户事后只会发现
+        //        「我明明改过，怎么变回去了」。现在覆盖前先存一份到 conflicts 表。
+        const conflictBase = new Date(Date.now() - 30_000).toISOString()
+        // 本机：比云端旧，但内容与云端不同（两端都改过）
+        await db.preferences.put({
+          id: 'pr_conflict',
+          personId: 'p_test',
+          category: 'test',
+          name: '本机改过的版本',
+          direction: 'like',
+          tags: [],
+          evidenceEntryIds: [],
+          createdAt: conflictBase,
+          updatedAt: conflictBase,
+        })
+        const remoteNewerTime = new Date(Date.parse(conflictBase) + 60_000).toISOString()
+        remote.set('preferences:pr_conflict', {
+          entity: 'preferences',
+          row_id: 'pr_conflict',
+          person_id: 'p_test',
+          updated_at: remoteNewerTime,
+          deleted: false,
+          payload: {
+            id: 'pr_conflict',
+            personId: 'p_test',
+            category: 'test',
+            name: '云端更新过的版本',
+            direction: 'like',
+            tags: [],
+            evidenceEntryIds: [],
+            createdAt: conflictBase,
+            updatedAt: remoteNewerTime,
+          },
+        })
+        const beforeConflicts = await db.conflicts.count()
+        const rConflict = await pullFromCloud()
+        const conflictRows = await db.conflicts.toArray()
+        const myConflict = conflictRows.find((c) => c.rowId === 'pr_conflict' && c.entity === 'preferences')
+        check(
+          '冲突时保留被覆盖版本',
+          Boolean(myConflict) && myConflict.payload?.name === '本机改过的版本',
+          myConflict ? `name=${myConflict.payload?.name}` : `conflicts=${conflictRows.length}`,
+        )
+        check(
+          '冲突被计入 conflicts 统计',
+          (rConflict.conflicts ?? 0) >= 1,
+          `conflicts=${rConflict.conflicts} 新增副本=${conflictRows.length - beforeConflicts}`,
+        )
+        check(
+          '云端更新的版本仍获胜（合并规则不变）',
+          (await db.preferences.get('pr_conflict'))?.name === '云端更新过的版本',
+          `local=${(await db.preferences.get('pr_conflict'))?.name}`,
+        )
+
+        // 内容完全相同时不该记冲突（只时间戳不同），避免冲突表被噪音塞满
+        await db.preferences.put({
+          id: 'pr_no_conflict',
+          personId: 'p_test',
+          category: 'test',
+          name: '内容相同',
+          direction: 'like',
+          tags: [],
+          evidenceEntryIds: [],
+          createdAt: conflictBase,
+          updatedAt: conflictBase,
+        })
+        const sameNewer = new Date(Date.parse(conflictBase) + 120_000).toISOString()
+        remote.set('preferences:pr_no_conflict', {
+          entity: 'preferences',
+          row_id: 'pr_no_conflict',
+          person_id: 'p_test',
+          updated_at: sameNewer,
+          deleted: false,
+          payload: {
+            id: 'pr_no_conflict',
+            personId: 'p_test',
+            category: 'test',
+            name: '内容相同',
+            direction: 'like',
+            tags: [],
+            evidenceEntryIds: [],
+            createdAt: conflictBase,
+            updatedAt: sameNewer,
+          },
+        })
+        await pullFromCloud()
+        const noisy = (await db.conflicts.toArray()).filter((c) => c.rowId === 'pr_no_conflict')
+        check('内容相同不记冲突（只有时间戳变化）', noisy.length === 0, `误记 ${noisy.length} 条`)
+
+        await db.preferences.delete('pr_conflict')
+        await db.preferences.delete('pr_no_conflict')
+        remote.delete('preferences:pr_conflict')
+        remote.delete('preferences:pr_no_conflict')
+
         // 11) 回归：从已发布快照建副本，时间戳不得晚于发布时刻
         //     真实故障：电脑用「一键导入」建副本时把缺失时间填成导入那一刻，
         //     副本比手机上的真实修改「更新」，于是电脑一上传就把手机改的档案覆盖掉了。

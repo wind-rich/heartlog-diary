@@ -250,13 +250,13 @@ try {
   const archiveTabs = await cdp.evaluate(`(() => {
     const t = document.body.innerText
     return {
-      tabs: ['偏好习惯','心愿礼物','状态健康','他的画像','纪念日','历史回顾'].filter(k => t.includes(k)),
+      tabs: ['偏好习惯','心愿礼物','状态健康','每日状态','他的画像','纪念日','历史回顾'].filter(k => t.includes(k)),
       hasAdd: t.includes('新增'),
       editBtns: [...document.querySelectorAll('button')].filter(b => b.innerText.trim() === '编辑').length,
       delBtns: [...document.querySelectorAll('button')].filter(b => b.innerText.trim() === '删除').length,
     };
   })()`)
-  if (archiveTabs.tabs.length !== 6) problems.push(`档案页标签只找到 ${archiveTabs.tabs.length} 个`)
+  if (archiveTabs.tabs.length !== 7) problems.push(`档案页标签只找到 ${archiveTabs.tabs.length} 个`)
   if (!archiveTabs.hasAdd) problems.push('档案页缺少「新增」按钮')
   if (archiveTabs.editBtns === 0) problems.push('档案页偏好列表没有「编辑」按钮')
   if (archiveTabs.delBtns === 0) problems.push('档案页偏好列表没有「删除」按钮')
@@ -508,6 +508,48 @@ try {
   const summaryGone = await cdp.evaluate(`!document.body.innerText.includes('自动化验证回顾')`)
   if (!summaryGone) problems.push('删除回顾后条目仍在列表里')
   notes.push(`回顾：新增=${summaryAdded}，删除=${summaryGone}`)
+
+  // 每日状态（第 8 类，2026-10-26 新增）
+  await cdp.evaluate(clickText('每日状态'))
+  await sleep(1300)
+  await cdp.evaluate(clickText('新增'))
+  await sleep(800)
+  const statusModal = await cdp.evaluate(`document.body.innerText.includes('新增每日状态')`)
+  if (!statusModal) problems.push('点「新增」没有打开每日状态弹窗')
+  // 日期默认已填；写「好事」字段
+  await cdp.evaluate(`window.__hlVerifyValue = '自动化验证每日状态'`)
+  await cdp.evaluate(setTextarea(`[...document.querySelectorAll('textarea')][0]`))
+  await sleep(300)
+  await cdp.evaluate(clickText('保存'))
+  await sleep(2300)
+  const statusAdded = await cdp.evaluate(`document.body.innerText.includes('自动化验证每日状态')`)
+  if (!statusAdded) problems.push('新增每日状态后列表里没有出现')
+
+  // 编辑
+  await cdp.evaluate(`(() => {
+    const row = [...document.querySelectorAll('li')].find(el => el.innerText.includes('自动化验证每日状态'));
+    const b = row && [...row.querySelectorAll('button')].find(x => x.innerText.trim() === '编辑');
+    b?.click(); return !!b;
+  })()`)
+  await sleep(800)
+  const statusEditModal = await cdp.evaluate(`document.body.innerText.includes('编辑每日状态')`)
+  if (!statusEditModal) problems.push('点「编辑」没有打开每日状态弹窗')
+  await cdp.evaluate(`window.__hlVerifyValue = '自动化验证每日状态改'`)
+  await cdp.evaluate(setTextarea(`[...document.querySelectorAll('textarea')][0]`))
+  await sleep(300)
+  await cdp.evaluate(clickText('保存'))
+  await sleep(2300)
+  const statusEdited = await cdp.evaluate(`document.body.innerText.includes('自动化验证每日状态改')`)
+  if (!statusEdited) problems.push('编辑每日状态后内容没有更新')
+
+  // 删除
+  await cdp.evaluate(deleteRowWith('自动化验证每日状态改'))
+  await sleep(600)
+  await cdp.evaluate(clickText('确定'))
+  await sleep(2000)
+  const statusGone = await cdp.evaluate(`!document.body.innerText.includes('自动化验证每日状态改')`)
+  if (!statusGone) problems.push('删除每日状态后条目仍在列表里')
+  notes.push(`每日状态：新增=${statusAdded}，编辑=${statusEdited}，删除=${statusGone}`)
 
   /* 4.8 访客端档案页不得出现任何编辑入口 */
   await cdp.send('Page.navigate', { url: `${BASE}/viewer.html#/archive` })

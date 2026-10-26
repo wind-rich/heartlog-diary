@@ -9,6 +9,7 @@ import {
   MessageSquareQuote,
   Pencil,
   Plus,
+  Smile,
   Sparkles,
   UserRound,
 } from 'lucide-react'
@@ -33,6 +34,7 @@ const TABS = [
   { key: 'preferences', label: '偏好习惯', icon: Heart, kind: 'preference' },
   { key: 'wishes', label: '心愿礼物', icon: Sparkles, kind: 'wish' },
   { key: 'health', label: '状态健康', icon: Activity, kind: 'health' },
+  { key: 'status', label: '每日状态', icon: Smile, kind: 'status' },
   { key: 'portrait', label: '他的画像', icon: UserRound, kind: 'insight' },
   { key: 'anniversary', label: '纪念日', icon: CalendarDays, kind: 'anniversary' },
   { key: 'review', label: '历史回顾', icon: MessageSquareQuote, kind: 'summary' },
@@ -108,6 +110,7 @@ export default function Archive() {
       {tab === 'preferences' && <Preferences edit={edit} />}
       {tab === 'wishes' && <Wishes edit={edit} />}
       {tab === 'health' && <Health edit={edit} />}
+      {tab === 'status' && <Statuses edit={edit} />}
       {tab === 'portrait' && <Portrait edit={edit} />}
       {tab === 'anniversary' && <Anniversaries edit={edit} />}
       {tab === 'review' && <Reviews edit={edit} />}
@@ -330,6 +333,54 @@ function Health({ edit }: { edit: EditCtx }) {
           {h.note && <p className="mt-1 text-[11.5px] leading-relaxed text-ink-500">{h.note}</p>}
           {h.recovery && <p className="mt-0.5 text-[11.5px] text-ink-500">恢复情况：{h.recovery}</p>}
           <RowActions edit={edit} kind="health" row={h} />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+const STATUS_MOOD_LABEL: Record<string, string> = {
+  happy: '开心',
+  calm: '平静',
+  low: '低落',
+  anxious: '焦虑',
+  angry: '生气',
+  custom: '自定义',
+}
+
+function Statuses({ edit }: { edit: EditCtx }) {
+  const s = useSnapshot()
+  const rows = [...(s.statuses || [])].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+  if (!rows.length) {
+    return (
+      <EmptyState
+        icon={<Smile size={22} />}
+        title="还没有每日状态"
+        desc="按天记一笔心情与精力，回头能看出起伏。"
+      />
+    )
+  }
+  return (
+    <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+      {rows.map((d, i) => (
+        <li key={d.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-[13.5px] font-medium text-ink-900">{d.date}</span>
+            {d.mood && (
+              <Pill tone="neutral">
+                {STATUS_MOOD_LABEL[d.mood] || d.mood}
+                {d.moodLevel ? ` ${d.moodLevel}/5` : ''}
+              </Pill>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-1 text-[11px] text-ink-500">
+            {d.energy !== undefined && <span>精力 {d.energy}/5</span>}
+            {d.sleepHours !== undefined && <span>睡眠 {d.sleepHours} 小时</span>}
+          </div>
+          {d.goodThing && <p className="mt-1 text-[11.5px] leading-relaxed text-ink-600">好事：{d.goodThing}</p>}
+          {d.worry && <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-500">烦心：{d.worry}</p>}
+          {d.note && <p className="mt-0.5 text-[11.5px] text-ink-400">{d.note}</p>}
+          <RowActions edit={edit} kind="status" row={d} />
         </li>
       ))}
     </ul>

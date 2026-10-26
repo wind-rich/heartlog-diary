@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie'
 import { recordDeletion, setTombstoneSink, TOMBSTONE_ENTITIES, type Tombstone } from '../lib/tombstones'
+import type { ConflictCopy } from '../lib/conflicts'
 import type {
   AIConfig,
   AppPrefs,
@@ -29,6 +30,7 @@ export class HeartLogDB extends Dexie {
   summaries!: Table<Summary, string>
   meta!: Table<MetaRow, string>
   tombstones!: Table<Tombstone, string>
+  conflicts!: Table<ConflictCopy, string>
 
   constructor() {
     super('heartlog')
@@ -48,6 +50,10 @@ export class HeartLogDB extends Dexie {
     // v2 只加一张表：删除同步用的墓碑。老库升级不丢数据（Dexie 按版本增量迁移）。
     this.version(2).stores({
       tombstones: 'id, entity, deletedAt, pushedAt',
+    })
+    // v3 只加一张表：同步冲突副本。覆盖前先留一份被丢弃的版本，可事后查看/取回。
+    this.version(3).stores({
+      conflicts: 'id, entity, rowId, discardedUpdatedAt, detectedAt, dismissedAt',
     })
   }
 }
