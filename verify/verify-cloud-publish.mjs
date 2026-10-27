@@ -136,7 +136,7 @@ try {
 
   /* 1. 云端模式：应当读到已发布快照，且照片来自云端媒体表 */
   await cdp.send('Page.navigate', { url: entryUrl({ source: 'cloud' }) })
-  await sleep(4500)
+  await sleep(12000)
 
   const home = await cdp.evaluate(`(() => {
     const t = document.body.innerText;

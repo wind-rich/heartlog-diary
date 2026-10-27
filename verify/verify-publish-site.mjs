@@ -172,7 +172,7 @@ try {
   /* ---- 访客端 ---- */
   cdp.requests.length = 0
   await cdp.send('Page.navigate', { url: viewerEntry })
-  await sleep(LIVE ? 4000 : 3200)
+  await sleep(LIVE ? 12000 : 3200)
   const viewer = await cdp.evaluate(`(() => {
     const t = document.body.innerText;
     const imgs = [...document.images];
