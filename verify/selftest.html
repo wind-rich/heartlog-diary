@@ -337,10 +337,16 @@
 
         // T6 第三版：题库与自定义抽卡内容也应进入公开快照白名单
         const sourceEntry = (await db.entries.toArray())[0]
+        const sourceEntry2 = (await db.entries.toArray())[1]
         const sourcePhoto = (await db.photos.toArray())[0]
         await db.gameContent.bulkPut([
           { id: 'gc_quiz_1', personId: 'p_test', kind: 'quiz', schemaVersion: 1, enabled: true, prompt: '他喜欢哪种天气？', options: [{ id: 'a', text: '晴天' }, { id: 'b', text: '雨天' }], correctOptionId: 'a', explanation: '测试说明', photoId: sourcePhoto.id, sourceEntryIds: [sourceEntry.id], createdAt: nowISO(), updatedAt: nowISO() },
           { id: 'gc_card_1', personId: 'p_test', kind: 'dateCard', schemaVersion: 1, enabled: true, category: 'surprise', text: '互写一张小纸条', tags: ['setting:any', 'budget:free', 'duration:short'], createdAt: nowISO(), updatedAt: nowISO() },
+          { id: 'gc_treasure_1', personId: 'p_test', kind: 'treasure', schemaVersion: 1, enabled: true, title: '发布寻宝测试', description: '三步都要能走通', steps: [
+            { id: 'ts1', clue: '第一条线索', targetType: 'entry', targetId: sourceEntry.id },
+            { id: 'ts2', clue: '第二条线索', targetType: 'entry', targetId: sourceEntry2.id },
+            { id: 'ts3', clue: '第三条线索', targetType: 'photo', targetId: sourcePhoto.id },
+          ], completionMessage: '三颗星都找到了', createdAt: nowISO(), updatedAt: nowISO() },
         ])
 
         // 复用前面造的数据：1 人物 / 1 记录（e_gone 已删） / 2 张照片
@@ -357,9 +363,9 @@
         check('发布：payload 里的照片不带媒体地址', payloadPhotos.every((p) => p.media.thumb.url === '' && p.media.full.url === ''))
         check('发布：payload 里照片数与统计一致', payloadPhotos.length === 2, `photos=${payloadPhotos.length}`)
         const gameItems = snapRow.payload.gameContent || []
-        check('发布：gameContent 白名单进入快照', gameItems.length === 2 && gameItems.some((x) => x.kind === 'quiz') && gameItems.some((x) => x.kind === 'dateCard'), JSON.stringify(gameItems.map((x) => x.kind)))
+        check('发布：gameContent 白名单进入快照', gameItems.length === 3 && gameItems.some((x) => x.kind === 'quiz') && gameItems.some((x) => x.kind === 'dateCard') && gameItems.some((x) => x.kind === 'treasure'), JSON.stringify(gameItems.map((x) => x.kind)))
         check('发布：gameContent 不透传内部字段', gameItems.every((x) => x.personId === undefined && x.createdAt === undefined && x.updatedAt === undefined && x.enabled === undefined), '仅公开字段')
-        check('发布：gameContent 计数与内容一致', snapRow.payload.manifest.counts.gameContent === 2, `counts=${snapRow.payload.manifest.counts.gameContent}`)
+        check('发布：gameContent 计数与内容一致', snapRow.payload.manifest.counts.gameContent === 3, `counts=${snapRow.payload.manifest.counts.gameContent}`)
 
         let invalidBlocked = null
         await db.gameContent.put({ id: 'gc_bad', personId: 'p_test', kind: 'quiz', schemaVersion: 1, enabled: true, prompt: '', options: [], correctOptionId: 'missing', sourceEntryIds: ['missing'], createdAt: nowISO(), updatedAt: nowISO() })
@@ -368,6 +374,18 @@
         await db.gameContent.delete('gc_bad')
         // 这条只是「发布校验」探针，不是同步删除场景；清掉墓碑避免污染后续同步断言
         await db.tombstones.delete('gameContent:gc_bad')
+
+        const sourcePhoto2 = (await db.photos.toArray())[1]
+        await db.gameContent.put({ id: 'gc_treasure_2', personId: 'p_test', kind: 'treasure', schemaVersion: 1, enabled: true, title: '第二个寻宝', steps: [
+          { id: 'a1', clue: 'A1', targetType: 'entry', targetId: sourceEntry.id },
+          { id: 'a2', clue: 'A2', targetType: 'entry', targetId: sourceEntry2.id },
+          { id: 'a3', clue: 'A3', targetType: 'photo', targetId: sourcePhoto2.id },
+        ], completionMessage: '完成', createdAt: nowISO(), updatedAt: nowISO() })
+        let multiBlocked = null
+        try { await publishToCloud() } catch (e) { multiBlocked = e }
+        check('发布：同一版本多个寻宝会中止', Boolean(multiBlocked) && String(multiBlocked?.message || '').includes('只能启用 1 个寻宝'), String(multiBlocked?.message || '').slice(0, 80))
+        await db.gameContent.delete('gc_treasure_2')
+        await db.tombstones.delete('gameContent:gc_treasure_2')
 
         // 再发一次：内容没变，应当全部跳过、不再上传
         const before = strict.calls.media

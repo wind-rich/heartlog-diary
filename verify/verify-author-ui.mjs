@@ -935,10 +935,86 @@ try {
   if (!recommendation.aiHint) problems.push('按记录生成的入口或未启用提示缺失')
   notes.push(`推荐：模板可填入=${recommendation.templateSaved}，卡包新增=${recommendation.packAdded} 张，按记录入口=${recommendation.aiHint}`)
 
+  const treasure = await cdp.evaluate(`(async () => {
+    const setVal = (el, v) => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const section = [...document.querySelectorAll('section')].find(s => s.innerText.includes('星球寻宝'));
+    const add = section ? [...section.querySelectorAll('button')].find(b => b.innerText.includes('新增')) : null;
+    add?.click();
+    await new Promise(r => setTimeout(r, 500));
+    let dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { error: '寻宝编辑弹窗未打开' };
+    const pause = () => new Promise(r => setTimeout(r, 120));
+    setVal(dialog.querySelector('input'), '自测寻宝关卡');
+    await pause();
+    const tas = [...dialog.querySelectorAll('textarea')];
+    setVal(tas[0], '三条线索的自测说明');
+    await pause();
+    setVal(tas[1], '第一条线索：去故事里找那天');
+    await pause();
+    setVal(tas[2], '第二条线索：去相册里找那张图');
+    await pause();
+    setVal(tas[3], '第三条线索：再回一条记录');
+    await pause();
+    setVal(tas[4], '自测完成寄语');
+    await pause();
+    let selects = [...dialog.querySelectorAll('select')];
+    const pickFirstTarget = (select, skip = []) => {
+      const option = [...select.options].find(o => o.value && !skip.includes(o.value));
+      if (option) setVal(select, option.value);
+      return option?.value || '';
+    };
+    const t1 = pickFirstTarget(selects[1]);
+    await pause();
+    selects = [...dialog.querySelectorAll('select')];
+    const t2 = pickFirstTarget(selects[3], [t1]);
+    await pause();
+    selects = [...dialog.querySelectorAll('select')];
+    setVal(selects[4], 'photo');
+    await new Promise(r => setTimeout(r, 350));
+    dialog = document.querySelector('[role="dialog"]');
+    selects = [...dialog.querySelectorAll('select')];
+    const t3 = pickFirstTarget(selects[5]);
+    await new Promise(r => setTimeout(r, 350));
+    [...document.querySelectorAll('[role="dialog"] button')].find(b => b.innerText.trim() === '保存')?.click();
+    await new Promise(r => setTimeout(r, 900));
+    const db = await new Promise((res) => { const q = indexedDB.open('heartlog'); q.onsuccess = () => res(q.result) });
+    const rows = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    const saved = rows.find((row) => row.kind === 'treasure' && row.title === '自测寻宝关卡');
+    const card = [...document.querySelectorAll('article')].find(a => a.innerText.includes('自测寻宝关卡'));
+    const preview = card ? [...card.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '预览') : null;
+    preview?.click();
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      saved: Boolean(saved),
+      steps: saved?.steps?.length ?? 0,
+      targets: [t1, t2, t3].filter(Boolean).length,
+      preview: document.body.innerText.includes('预览只检查线索与目标') && document.body.innerText.includes('自测完成寄语') && !document.body.innerText.includes('目标缺失或未选择'),
+      debug: {
+        title: dialog.querySelector('input')?.value ?? '',
+        texts: [...dialog.querySelectorAll('textarea')].map(t => t.value),
+        selects: [...dialog.querySelectorAll('select')].map(s => s.value),
+        errors: [...dialog.querySelectorAll('.text-rose-700')].map(e => e.innerText),
+      },
+    };
+  })()`)
+  if (!treasure.saved || treasure.steps !== 3 || treasure.targets !== 3) problems.push(`寻宝创建失败：${JSON.stringify(treasure)}`)
+  if (!treasure.preview) problems.push(`寻宝预览未显示或缺少三步/寄语：${JSON.stringify(treasure)}`)
+  await cdp.shot('11-treasure-preview.png')
+  await cdp.evaluate(`(() => [...document.querySelectorAll('[role="dialog"] button')].find(b => b.innerText.trim() === '关闭')?.click())()`)
+  await sleep(300)
+  await cdp.shot('12-game-content.png')
+  notes.push(`寻宝：保存=${treasure.saved}，步骤=${treasure.steps}，目标=${treasure.targets}，预览=${treasure.preview}`)
+
   // 打开第三版三个开关，再确认作者端大厅出现对应卡片
   await cdp.send('Page.navigate', { url: `${BASE}/#/settings` })
   await sleep(2200)
-  for (const label of ['把时光排好', '关于他的五道题', '今天一起做什么']) {
+  for (const label of ['把时光排好', '关于他的五道题', '今天一起做什么', '星球寻宝']) {
     await cdp.evaluate(`(() => {
       const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes(${JSON.stringify(label)}));
       const on = btn?.getAttribute('aria-checked') === 'true' || btn?.querySelector('.bg-rose-deep');
@@ -953,9 +1029,10 @@ try {
     timeline: document.body.innerText.includes('把时光排好'),
     quiz: document.body.innerText.includes('关于他的五道题'),
     dateDraw: document.body.innerText.includes('今天一起做什么'),
+    treasure: document.body.innerText.includes('星球寻宝'),
   }))()`)
-  if (!authorHall.timeline || !authorHall.quiz || !authorHall.dateDraw) problems.push(`作者端大厅缺第三版玩法：${JSON.stringify(authorHall)}`)
-  notes.push(`互动内容：创建/刷新/编辑/停用通过，大厅第三版入口=${JSON.stringify(authorHall)}`)
+  if (!authorHall.timeline || !authorHall.quiz || !authorHall.dateDraw || !authorHall.treasure) problems.push(`作者端大厅缺第三/四版玩法：${JSON.stringify(authorHall)}`)
+  notes.push(`互动内容：创建/刷新/编辑/停用通过，大厅第三/四版入口=${JSON.stringify(authorHall)}`)
   await cdp.shot('10-game-content.png')
 
   if (cdp.logs.length) problems.push(`控制台错误：${cdp.logs.slice(0, 2).join(' | ')}`)

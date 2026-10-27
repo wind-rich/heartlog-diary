@@ -225,13 +225,30 @@ export interface PublicDateCardContent {
   tags: string[]
 }
 
-export type PublicGameContent = PublicQuizContent | PublicDateCardContent
+export interface PublicTreasureStep {
+  id: string
+  clue: string
+  targetType: 'entry' | 'photo'
+  targetId: string
+}
+
+export interface PublicTreasureContent {
+  id: string
+  kind: 'treasure'
+  schemaVersion: number
+  title: string
+  description?: string
+  steps: PublicTreasureStep[]
+  completionMessage: string
+}
+
+export type PublicGameContent = PublicQuizContent | PublicDateCardContent | PublicTreasureContent
 
 /* ------------------------------------------------------------------ */
 /* 展示配置（逐字段白名单，不从整个 meta 复制）                          */
 /* ------------------------------------------------------------------ */
 
-export type GameId = 'memory' | 'puzzle' | 'photoGuess' | 'memoryBox' | 'timeline' | 'quiz' | 'dateDraw'
+export type GameId = 'memory' | 'puzzle' | 'photoGuess' | 'memoryBox' | 'timeline' | 'quiz' | 'dateDraw' | 'treasure'
 
 export interface ViewerGameConfig {
   enabled: boolean

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useMemo } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { CalendarHeart, CircleHelp, Image as ImageIcon, Images, ListOrdered, Puzzle, Shuffle, Sparkles, Star } from 'lucide-react'
+import { CalendarHeart, CircleHelp, Compass, Image as ImageIcon, Images, ListOrdered, Puzzle, Shuffle, Sparkles, Star } from 'lucide-react'
 import { useSnapshot } from '../state/SnapshotContext'
 import { enabledGameIds, GAME_META, hasEnabledGames, isGameEnabled, isGameId } from '../game/config'
 import { randomSeed, usablePhotos } from '../game/memory'
 import { buildTimelinePool } from '../game/timeline'
 import { validQuizItems } from '../game/quiz'
+import { findTreasureHunt } from '../game/treasure'
 import type { GameId, PublishedSnapshot } from '../types'
 
 const MemoryGame = lazy(() => import('./games/MemoryGame'))
@@ -15,6 +16,7 @@ const MemoryBoxGame = lazy(() => import('./games/MemoryBoxGame'))
 const TimelineGame = lazy(() => import('./games/TimelineGame'))
 const QuizGame = lazy(() => import('./games/QuizGame'))
 const DateDrawGame = lazy(() => import('./games/DateDrawGame'))
+const TreasureGame = lazy(() => import('./games/TreasureGame'))
 
 const GAME_COMPONENTS: Record<GameId, typeof MemoryGame> = {
   memory: MemoryGame,
@@ -24,6 +26,7 @@ const GAME_COMPONENTS: Record<GameId, typeof MemoryGame> = {
   timeline: TimelineGame,
   quiz: QuizGame,
   dateDraw: DateDrawGame,
+  treasure: TreasureGame,
 }
 
 const GAME_ICONS: Record<GameId, typeof Puzzle> = {
@@ -34,6 +37,7 @@ const GAME_ICONS: Record<GameId, typeof Puzzle> = {
   timeline: ListOrdered,
   quiz: CircleHelp,
   dateDraw: CalendarHeart,
+  treasure: Compass,
 }
 
 function LoadingGame() {
@@ -69,6 +73,10 @@ function gameAvailability(id: GameId, snapshot: PublishedSnapshot, photoCount: n
     return count > 0 ? { ok: true, text: `题库 ${count} 题` } : { ok: false, text: '还没有可用题目' }
   }
   if (id === 'dateDraw') return { ok: true, text: '内置卡组 + 作者自定义卡' }
+  if (id === 'treasure') {
+    const hunt = findTreasureHunt(snapshot.gameContent)
+    return hunt ? { ok: true, text: `${hunt.steps.length} 步 · ${hunt.title}` } : { ok: false, text: '还没有已发布的寻宝' }
+  }
   return { ok: true, text: '可以开始' }
 }
 

@@ -72,9 +72,11 @@ interface LightboxProps {
   onOpenEntry?: (entryId: string) => void
   /** 作者端才有：大图里的删除入口（渲染插槽，访客端不传） */
   renderDelete?: () => ReactNode
+  /** 当前照片上的额外动作（如寻宝确认）；由调用方按 photo 渲染 */
+  renderAction?: (photo: PublicPhoto) => ReactNode
 }
 
-export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, renderDelete }: LightboxProps) {
+export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, renderDelete, renderAction }: LightboxProps) {
   const photo = photos[index]
   const touchX = useRef<number | null>(null)
   // 云端模式没带图地址，按需取一次大图；静态模式直接返回原地址
@@ -181,6 +183,7 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
             <span key={t}>#{t}</span>
           ))}
           {renderDelete?.()}
+          {renderAction?.(photo)}
           {photo.entryId && onOpenEntry && (
             <button
               type="button"

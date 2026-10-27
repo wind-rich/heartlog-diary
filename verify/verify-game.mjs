@@ -178,13 +178,13 @@ try {
     const text = document.body.innerText;
     return {
       title: text.includes('回忆游乐园'),
-      cards: ['记忆配对','拼回这一刻','猜猜是哪一张','今日回忆盲盒','把时光排好','关于他的五道题','今天一起做什么'].filter(name => text.includes(name)),
+      cards: ['记忆配对','拼回这一刻','猜猜是哪一张','今日回忆盲盒','把时光排好','关于他的五道题','今天一起做什么','星球寻宝'].filter(name => text.includes(name)),
       random: [...document.querySelectorAll('button')].some(b => b.innerText.includes('随便玩一个')),
       hash: location.hash,
     };
   })()`)
-  if (!hall.title || hall.cards.length !== 7 || !hall.random) problems.push(`互动大厅不完整：${JSON.stringify(hall)}`)
-  notes.push(`大厅：${hall.cards.length}/7 款玩法可见`)
+  if (!hall.title || hall.cards.length !== 8 || !hall.random) problems.push(`互动大厅不完整：${JSON.stringify(hall)}`)
+  notes.push(`大厅：${hall.cards.length}/8 款玩法可见`)
   await cdp.shot('01-game-hall.png')
 
   /* ---------- B1. 记忆配对 ---------- */
@@ -501,6 +501,69 @@ try {
   notes.push('活动抽卡：三类组合、场景推荐、锁定重抽与本机收藏通过')
   await cdp.shot('10-date-draw.png')
 
+  /* ---------- B8. 星球寻宝 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=treasure` })
+  await sleep(1800)
+  const treasureStart = await cdp.evaluate(`(() => ({
+    title: document.body.innerText.includes('三颗散落的星'),
+    first: document.body.innerText.includes('第一颗星落在'),
+    progress: document.body.innerText.includes('第 1 / 3 颗星'),
+    assist: [...document.querySelectorAll('button')].some(b => b.innerText.includes('求助揭晓')),
+  }))()`)
+  if (!treasureStart.title || !treasureStart.first || !treasureStart.progress || !treasureStart.assist) problems.push(`寻宝开局异常：${JSON.stringify(treasureStart)}`)
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('求助揭晓'))?.click())()`)
+  await sleep(250)
+  const treasureHint = await cdp.evaluate(`document.body.innerText.includes('已使用求助') && document.body.innerText.includes('提示：目标更接近')`)
+  if (!treasureHint) problems.push('寻宝求助揭晓没有标注辅助状态')
+
+  // 错误目标：不出现确认按钮，进度不变
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/stories/e_02` })
+  await sleep(1200)
+  const wrongTarget = await cdp.evaluate(`document.body.innerText.includes('这是我要找的')`)
+  if (wrongTarget) problems.push('错误目标也出现了寻宝确认按钮')
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/stories/e_01` })
+  await sleep(1200)
+  const firstTarget = await cdp.evaluate(`document.body.innerText.includes('这是我要找的')`)
+  if (!firstTarget) problems.push('正确目标没有出现寻宝确认按钮')
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('这是我要找的'))?.click())()`)
+  await sleep(1000)
+  const afterFirst = await cdp.evaluate(`({
+    progress: document.body.innerText.includes('第 2 / 3 颗星'),
+    second: document.body.innerText.includes('第二颗星藏在花里'),
+    saved: Object.keys(localStorage).some(k => k.startsWith('heartlog.game.treasure.v1.')),
+  })`)
+  if (!afterFirst.progress || !afterFirst.second || !afterFirst.saved) problems.push(`寻宝第一步未推进或未保存：${JSON.stringify(afterFirst)}`)
+
+  // 刷新继续，不跳回第一步
+  await cdp.send('Page.reload', { ignoreCache: true })
+  await sleep(1000)
+  const treasureAfterReload = await cdp.evaluate(`document.body.innerText.includes('第 2 / 3 颗星')`)
+  if (!treasureAfterReload) problems.push('寻宝刷新后丢失进度')
+
+  // 第二步是照片目标：深链打开相册大图并确认
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/album?photo=ph_02` })
+  await sleep(1500)
+  const photoTarget = await cdp.evaluate(`document.body.innerText.includes('这是我要找的')`)
+  if (!photoTarget) problems.push('照片目标大图没有出现寻宝确认按钮')
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('这是我要找的'))?.click())()`)
+  await sleep(1000)
+  const afterSecond = await cdp.evaluate(`document.body.innerText.includes('第 3 / 3 颗星') && document.body.innerText.includes('第三颗星在厨房')`)
+  if (!afterSecond) problems.push('寻宝第二步照片目标未推进')
+
+  // 第三步完成后点星座与寄语
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/stories/e_05` })
+  await sleep(1200)
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('这是我要找的'))?.click())()`)
+  await sleep(1000)
+  const treasureDone = await cdp.evaluate(`({
+    done: document.body.innerText.includes('三颗星都找到了'),
+    message: document.body.innerText.includes('三颗星都回来了'),
+    assisted: document.body.innerText.includes('这次使用了求助揭晓'),
+  })`)
+  if (!treasureDone.done || !treasureDone.message || !treasureDone.assisted) problems.push(`寻宝完成页异常：${JSON.stringify(treasureDone)}`)
+  notes.push('星球寻宝：错误目标不推进、求助完成、跨页续关与完成寄语通过')
+  await cdp.shot('11-treasure.png')
+
   /* ---------- C. 响应式与访客边界 ---------- */
   for (const size of [{ width: 320, height: 740, mobile: true }, { width: 1440, height: 900, mobile: false }]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { ...size, deviceScaleFactor: size.mobile ? 2 : 1 })
@@ -514,7 +577,7 @@ try {
   const dbs = await cdp.evaluate(`(async () => { try { return (await indexedDB.databases()).length } catch { return -1 } })()`)
   if (dbs !== 0) problems.push(`小游戏页面创建了 ${dbs} 个 IndexedDB（应完全不用数据库）`)
   const lsKeys = await cdp.evaluate(`Object.keys(localStorage)`)
-  const allowed = (k) => k.startsWith('hl-') || /^heartlog\.game\.(memory|puzzle|photoGuess|memoryBox|timeline|quiz|dateDraw)\.v\d+\./.test(k)
+  const allowed = (k) => k.startsWith('hl-') || /^heartlog\.game\.(memory|puzzle|photoGuess|memoryBox|timeline|quiz|dateDraw|treasure)\.v\d+\./.test(k)
   const unexpected = lsKeys.filter((k) => !allowed(k))
   if (unexpected.length) problems.push(`localStorage 出现预期之外的键：${unexpected.join(', ')}`)
   if (cdp.writes.length) problems.push(`页面发出了非 GET 请求：${cdp.writes.slice(0, 2).join(' | ')}`)
@@ -530,7 +593,7 @@ try {
     for (const p of problems) console.log(`  · ${p}`)
     process.exitCode = 1
   } else {
-    console.log('✓ T6 回忆游乐园通过：大厅、配对升级、拼图、局部猜图、回忆盲盒、时光排序、五道题、活动抽卡均可用；成绩只在本机，不建库不发写请求。')
+    console.log('✓ T6 回忆游乐园通过：大厅八种玩法、配对升级、拼图、局部猜图、回忆盲盒、时光排序、五道题、活动抽卡、星球寻宝均可用；成绩只在本机，不建库不发写请求。')
   }
   console.log(`截图：${OUT}`)
 } finally {

@@ -1,11 +1,12 @@
-import { Suspense, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Images } from 'lucide-react'
 import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
 import { useAuthorReload } from '../author/AuthorReload'
 import { DeletePhotoButton, PhotoUploadButton } from '../author/lazy'
 import { photosDesc } from '../lib/data'
 import { PhotoTile, Lightbox } from '../components/Photos'
+import { TreasureTargetAction } from '../components/TreasureTargetAction'
 import { EmptyState } from '../components/bits'
 import { parseAny } from '../../lib/date'
 
@@ -14,8 +15,10 @@ export default function Album() {
   const { editable } = useSnapshotState()
   const reload = useAuthorReload()
   const nav = useNavigate()
+  const [params] = useSearchParams()
   const [year, setYear] = useState<'all' | number>('all')
   const [index, setIndex] = useState<number | null>(null)
+  const openedTarget = useRef(false)
 
   const all = useMemo(() => photosDesc(s), [s])
 
@@ -31,6 +34,17 @@ export default function Album() {
     if (year === 'all') return all
     return all.filter((p) => p.takenAt && parseAny(p.takenAt).getFullYear() === year)
   }, [all, year])
+
+  useEffect(() => {
+    const photoId = params.get('photo')
+    if (!photoId || openedTarget.current) return
+    const target = all.findIndex((photo) => photo.id === photoId)
+    if (target >= 0) {
+      openedTarget.current = true
+      setYear('all')
+      setIndex(target)
+    }
+  }, [all, params])
 
   return (
     <div className="space-y-4">
@@ -118,6 +132,7 @@ export default function Album() {
             setIndex(null)
             nav(`/stories/${id}`)
           }}
+          renderAction={(photo) => <TreasureTargetAction targetType="photo" targetId={photo.id} />}
           renderDelete={
             editable && reload
               ? () => (

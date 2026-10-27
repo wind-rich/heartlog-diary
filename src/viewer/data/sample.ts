@@ -536,6 +536,16 @@ function buildDemo(): PublishedSnapshot {
     { id: 'gd_01', kind: 'dateCard', schemaVersion: 1, category: 'activity', text: '一起复刻第一次约会点过的东西', tags: ['setting:indoor', 'budget:low', 'duration:short'] },
     { id: 'gd_02', kind: 'dateCard', schemaVersion: 1, category: 'place', text: '找一家安静的甜品店', tags: ['setting:indoor', 'budget:low', 'duration:short'] },
     { id: 'gd_03', kind: 'dateCard', schemaVersion: 1, category: 'surprise', text: '各自写下一句今天的感谢，交换着读', tags: ['setting:any', 'budget:free', 'duration:short'] },
+    {
+      id: 'gt_01', kind: 'treasure', schemaVersion: 1, title: '三颗散落的星',
+      description: '沿着三条线索，把藏在故事和相册里的三颗星找回来。',
+      steps: [
+        { id: 'ts_01', clue: '第一颗星落在一个有风的傍晚，江边的云被吹成了一层层。', targetType: 'entry', targetId: 'e_01' },
+        { id: 'ts_02', clue: '第二颗星藏在花里——那一束花的颜色，他说像我。', targetType: 'photo', targetId: 'ph_02' },
+        { id: 'ts_03', clue: '第三颗星在厨房，第一次做番茄牛腩的那一天。', targetType: 'entry', targetId: 'e_05' },
+      ],
+      completionMessage: '三颗星都回来了。其实它们一直没走远，只是等我们再看一眼。',
+    },
   ]
 
   return {
@@ -572,6 +582,7 @@ function buildDemo(): PublishedSnapshot {
         timeline: { enabled: true },
         quiz: { enabled: true },
         dateDraw: { enabled: true },
+        treasure: { enabled: true },
       },
       music: { title: '第 7 部电影的片尾曲', artist: '示例曲目', src: undefined },
     },

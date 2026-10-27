@@ -69,7 +69,34 @@ export function validateGameContent(
   }
 
   if (row.kind === 'treasure') {
-    if (row.enabled) errors.push('星球寻宝：属于第四版，当前请先停用')
+    const title = cleanText(row.title)
+    if (!title) errors.push('星球寻宝：标题不能为空')
+    if (title.length > 40) errors.push('星球寻宝：标题不能超过 40 字')
+    if (cleanText(row.description).length > 200) errors.push('星球寻宝：说明不能超过 200 字')
+    const message = cleanText(row.completionMessage)
+    if (!message) errors.push('星球寻宝：完成寄语不能为空')
+    if (message.length > 200) errors.push('星球寻宝：完成寄语不能超过 200 字')
+    const steps = Array.isArray(row.steps) ? row.steps : []
+    if (steps.length !== 3) errors.push('星球寻宝：必须正好 3 步')
+    const stepIds = new Set<string>()
+    const targets = new Set<string>()
+    steps.forEach((step, index) => {
+      const no = index + 1
+      const id = cleanText(step?.id)
+      const clue = cleanText(step?.clue)
+      if (!id || stepIds.has(id)) errors.push(`星球寻宝：第 ${no} 步缺少 ID 或 ID 重复`)
+      if (!clue) errors.push(`星球寻宝：第 ${no} 步线索不能为空`)
+      if (clue.length > 100) errors.push(`星球寻宝：第 ${no} 步线索不能超过 100 字`)
+      if (step?.targetType !== 'entry' && step?.targetType !== 'photo') errors.push(`星球寻宝：第 ${no} 步目标类型必须是记录或照片`)
+      const targetId = cleanText(step?.targetId)
+      if (!targetId) errors.push(`星球寻宝：第 ${no} 步必须选择目标`)
+      else if (step.targetType === 'entry' && !context.entryIds.has(targetId)) errors.push(`星球寻宝：第 ${no} 步目标记录不在本次可发布记录里`)
+      else if (step.targetType === 'photo' && !context.photoIds.has(targetId)) errors.push(`星球寻宝：第 ${no} 步目标照片不在本次可发布照片里`)
+      const key = `${step?.targetType}:${targetId}`
+      if (targetId && targets.has(key)) errors.push(`星球寻宝：第 ${no} 步与前面步骤目标重复`)
+      targets.add(key)
+      stepIds.add(id)
+    })
     return errors
   }
 
@@ -103,6 +130,22 @@ export function toPublicGameContent(row: GameContent): PublicGameContent | null 
       tags: uniqueStrings(row.tags),
     }
   }
+  if (row.kind === 'treasure') {
+    return {
+      id: row.id,
+      kind: 'treasure',
+      schemaVersion: row.schemaVersion,
+      title: cleanText(row.title),
+      description: cleanText(row.description) || undefined,
+      steps: (row.steps ?? []).map((step) => ({
+        id: cleanText(step.id),
+        clue: cleanText(step.clue),
+        targetType: step.targetType,
+        targetId: cleanText(step.targetId),
+      })),
+      completionMessage: cleanText(row.completionMessage),
+    }
+  }
   return null
 }
 
@@ -122,6 +165,10 @@ export function mapPublicGameContent(
     }
     const item = toPublicGameContent(row)
     if (item) items.push(item)
+  }
+  const enabledTreasures = items.filter((item) => item.kind === 'treasure')
+  if (enabledTreasures.length > 1) {
+    errors.push(`星球寻宝：同一发布版本只能启用 1 个寻宝，当前启用了 ${enabledTreasures.length} 个，请停用多余的关卡`)
   }
   return { items, errors }
 }

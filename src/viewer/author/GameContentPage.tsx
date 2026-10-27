@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, CircleCheck, CircleOff, Lightbulb, PackagePlus, Pencil, Plus, Sparkles, Trash2, WandSparkles } from 'lucide-react'
+import { ArrowLeft, CircleCheck, CircleOff, Eye, Lightbulb, PackagePlus, Pencil, Plus, Sparkles, Trash2, WandSparkles } from 'lucide-react'
 import { db, nowISO, uid } from '../../db/db'
 import type { Entry, GameContent, GameContentKind, Photo } from '../../db/types'
 import { useAuthorReload } from './AuthorReload'
@@ -14,7 +14,7 @@ import { aiReady } from '../../lib/ai'
 
 interface Draft {
   id?: string
-  kind: 'quiz' | 'dateCard'
+  kind: 'quiz' | 'dateCard' | 'treasure'
   enabled: boolean
   prompt: string
   options: { id: string; text: string }[]
@@ -25,9 +25,13 @@ interface Draft {
   category: 'activity' | 'place' | 'surprise'
   text: string
   tags: string
+  title: string
+  description: string
+  steps: { id: string; clue: string; targetType: 'entry' | 'photo'; targetId: string }[]
+  completionMessage: string
 }
 
-const blankDraft = (kind: 'quiz' | 'dateCard'): Draft => ({
+const blankDraft = (kind: 'quiz' | 'dateCard' | 'treasure'): Draft => ({
   kind,
   enabled: true,
   prompt: '',
@@ -42,12 +46,16 @@ const blankDraft = (kind: 'quiz' | 'dateCard'): Draft => ({
   category: 'activity',
   text: '',
   tags: '',
+  title: '',
+  description: '',
+  steps: [0, 1, 2].map((index) => ({ id: `ts_${Date.now().toString(36)}_${index}`, clue: '', targetType: 'entry' as const, targetId: '' })),
+  completionMessage: '',
 })
 
 function fromRow(row: GameContent): Draft {
   return {
     id: row.id,
-    kind: row.kind === 'dateCard' ? 'dateCard' : 'quiz',
+    kind: row.kind === 'dateCard' ? 'dateCard' : row.kind === 'treasure' ? 'treasure' : 'quiz',
     enabled: row.enabled !== false,
     prompt: row.prompt ?? '',
     options: (row.options ?? []).map((option) => ({ id: option.id, text: option.text })),
@@ -58,6 +66,10 @@ function fromRow(row: GameContent): Draft {
     category: row.category ?? 'activity',
     text: row.text ?? '',
     tags: (row.tags ?? []).join('，'),
+    title: row.title ?? '',
+    description: row.description ?? '',
+    steps: (row.steps ?? []).map((step) => ({ ...step })),
+    completionMessage: row.completionMessage ?? '',
   }
 }
 
@@ -71,6 +83,7 @@ export default function GameContentPage() {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [personId, setPersonId] = useState('')
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [previewTreasure, setPreviewTreasure] = useState<GameContent | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -185,6 +198,7 @@ export default function GameContentPage() {
 
   const quizRows = rows.filter((row) => row.kind === 'quiz')
   const cardRows = rows.filter((row) => row.kind === 'dateCard')
+  const treasureRows = rows.filter((row) => row.kind === 'treasure')
 
   return (
     <div className="mx-auto max-w-[860px] space-y-4 pb-8">
@@ -236,6 +250,17 @@ export default function GameContentPage() {
             onToggle={toggle}
             onDelete={remove}
           />
+          <ContentSection
+            title="星球寻宝"
+            count={treasureRows.length}
+            action={() => setDraft(blankDraft('treasure'))}
+            rows={treasureRows}
+            context={context}
+            onEdit={(row) => setDraft(fromRow(row))}
+            onToggle={toggle}
+            onDelete={remove}
+            onPreview={(row) => setPreviewTreasure(row)}
+          />
         </>
       )}
 
@@ -246,8 +271,10 @@ export default function GameContentPage() {
             <div className="mt-4 space-y-4">
               {draft.kind === 'quiz' ? (
                 <QuizEditor draft={draft} setDraft={setDraft} entries={entries} photos={photos} />
-              ) : (
+              ) : draft.kind === 'dateCard' ? (
                 <DateCardEditor draft={draft} setDraft={setDraft} />
+              ) : (
+                <TreasureEditor draft={draft} setDraft={setDraft} entries={entries} photos={photos} />
               )}
               <label className="flex items-center gap-2 text-[13px] text-ink-700">
                 <input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
@@ -263,6 +290,41 @@ export default function GameContentPage() {
                 <button type="button" onClick={() => void save()} disabled={draftErrors.length > 0} className="btn-primary min-h-11 px-4 text-[12px] disabled:opacity-40">保存</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {previewTreasure && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-900/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="预览星球寻宝">
+          <div className="mx-auto my-8 max-w-[620px] rounded-3xl bg-[#FFFCF8] p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[17px] font-semibold text-ink-900">{previewTreasure.title}</h2>
+                <p className="mt-1 text-[12px] leading-relaxed text-ink-500">{previewTreasure.description || '没有填写说明'}</p>
+              </div>
+              <button type="button" onClick={() => setPreviewTreasure(null)} className="btn-ghost min-h-11 px-3 text-[12px]">关闭</button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {(previewTreasure.steps ?? []).map((step, index) => {
+                const entry = step.targetType === 'entry' ? entries.find((item) => item.id === step.targetId) : undefined
+                const photo = step.targetType === 'photo' ? photos.find((item) => item.id === step.targetId) : undefined
+                const label = step.targetType === 'entry'
+                  ? entry?.title
+                  : photo ? (photo.caption || '未命名照片') : undefined
+                return (
+                  <div key={step.id || index} className="rounded-xl border border-cream-200 bg-white px-3 py-2.5">
+                    <div className="text-[11px] text-amber-700">第 {index + 1} 颗星 · {step.targetType === 'entry' ? '记录' : '照片'}</div>
+                    <p className="mt-1 text-[13px] leading-relaxed text-ink-800">{step.clue || '（线索为空）'}</p>
+                    <p className="mt-1 text-[11px] text-ink-400">目标：{label || '⚠ 目标缺失或未选择'}</p>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+              <div className="text-[11px] text-amber-700">完成寄语</div>
+              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-amber-900">{previewTreasure.completionMessage || '（未填写）'}</p>
+            </div>
+            <p className="mt-3 text-[11.5px] leading-relaxed text-ink-400">预览只检查线索与目标是否能对应；真实访客必须到目标详情点「这是我要找的」才会推进。</p>
           </div>
         </div>
       )}
@@ -291,6 +353,21 @@ function toRow(draft: Draft, personId: string, existing?: GameContent): GameCont
       explanation: draft.explanation.trim() || undefined,
       photoId: draft.photoId || undefined,
       sourceEntryIds: draft.sourceEntryId ? [draft.sourceEntryId] : [],
+    }
+  }
+  if (draft.kind === 'treasure') {
+    return {
+      ...common,
+      kind: 'treasure',
+      title: draft.title.trim(),
+      description: draft.description.trim() || undefined,
+      steps: draft.steps.map((step) => ({
+        id: step.id,
+        clue: step.clue.trim(),
+        targetType: step.targetType,
+        targetId: step.targetId,
+      })),
+      completionMessage: draft.completionMessage.trim(),
     }
   }
   return {
@@ -452,6 +529,7 @@ function ContentSection({
   onEdit,
   onToggle,
   onDelete,
+  onPreview,
 }: {
   title: string
   count: number
@@ -461,6 +539,7 @@ function ContentSection({
   onEdit: (row: GameContent) => void
   onToggle: (row: GameContent) => void
   onDelete: (row: GameContent) => void
+  onPreview?: (row: GameContent) => void
 }) {
   return (
     <section className="rounded-2xl border border-cream-200 bg-white/75 p-4">
@@ -485,12 +564,13 @@ function ContentSection({
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-medium text-ink-900">{row.prompt || row.text || row.title || row.id}</div>
                   <div className="mt-1 text-[11px] text-ink-400">
-                    {row.kind === 'quiz' ? `${row.options?.length ?? 0} 个选项` : `${row.category === 'activity' ? '活动' : row.category === 'place' ? '地点类型' : '小彩蛋'} · ${(row.tags ?? []).join(' / ') || '无标签'}`}
+                    {row.kind === 'quiz' ? `${row.options?.length ?? 0} 个选项` : row.kind === 'treasure' ? `${row.steps?.length ?? 0} 步寻宝` : `${row.category === 'activity' ? '活动' : row.category === 'place' ? '地点类型' : '小彩蛋'} · ${(row.tags ?? []).join(' / ') || '无标签'}`}
                   </div>
                   {errors.length > 0 && <div className="mt-1 text-[11px] text-rose-700">{errors[0]}</div>}
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <button type="button" onClick={() => onToggle(row)} className="btn-ghost min-h-11 px-2 text-[11.5px]">{row.enabled ? '停用' : '启用'}</button>
+                  {onPreview && <button type="button" onClick={() => onPreview(row)} aria-label="预览" className="btn-ghost min-h-11 px-2"><Eye size={14} /></button>}
                   <button type="button" onClick={() => onEdit(row)} aria-label="编辑" className="btn-ghost min-h-11 px-2"><Pencil size={14} /></button>
                   <button type="button" onClick={() => onDelete(row)} aria-label="删除" className="btn-ghost min-h-11 px-2 text-rose-700"><Trash2 size={14} /></button>
                 </div>
@@ -566,6 +646,53 @@ function DateCardEditor({ draft, setDraft }: { draft: Draft; setDraft: (draft: D
         <input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-cream-300 bg-white px-3 text-[13px]" placeholder="setting:indoor, budget:free, duration:short" />
       </label>
       <p className="text-[11.5px] leading-relaxed text-ink-400">筛选使用 `setting:indoor/outdoor`、`duration:short/halfDay/day`、`budget:free/low/medium/high`；标签也会用于规则匹配。</p>
+    </>
+  )
+}
+
+function TreasureEditor({ draft, setDraft, entries, photos }: { draft: Draft; setDraft: (draft: Draft) => void; entries: Entry[]; photos: Photo[] }) {
+  const updateStep = (index: number, patch: Partial<Draft['steps'][number]>) => {
+    const steps = draft.steps.map((step, i) => i === index ? { ...step, ...patch } : step)
+    setDraft({ ...draft, steps })
+  }
+  return (
+    <>
+      <label className="block text-[12px] font-medium text-ink-700">寻宝标题（40 字内）
+        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-cream-300 bg-white px-3 text-[13px]" placeholder="例如：三颗散落的星" />
+      </label>
+      <label className="block text-[12px] font-medium text-ink-700">一句话说明（可选）
+        <textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={2} className="mt-1 w-full rounded-xl border border-cream-300 bg-white px-3 py-2 text-[13px]" />
+      </label>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800">
+        固定 3 步。每步只写一条线索并选一个公开记录或照片；不要直接把目标标题写进线索，也不要用访客看不到的细节。
+      </div>
+      <div className="space-y-3">
+        {draft.steps.map((step, index) => (
+          <div key={step.id} className="rounded-xl border border-cream-200 bg-white p-3">
+            <div className="text-[12px] font-medium text-ink-700">第 {index + 1} 颗星</div>
+            <textarea value={step.clue} onChange={(event) => updateStep(index, { clue: event.target.value })} rows={2} placeholder="线索，例如：那天风很大，我们在江边走到天黑。" className="mt-1 w-full rounded-xl border border-cream-300 bg-white px-3 py-2 text-[13px]" />
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="text-[11.5px] text-ink-500">目标类型
+                <select value={step.targetType} onChange={(event) => updateStep(index, { targetType: event.target.value as 'entry' | 'photo', targetId: '' })} className="mt-1 min-h-11 w-full rounded-xl border border-cream-300 bg-white px-3 text-[12.5px]">
+                  <option value="entry">故事记录</option>
+                  <option value="photo">照片</option>
+                </select>
+              </label>
+              <label className="text-[11.5px] text-ink-500">目标
+                <select value={step.targetId} onChange={(event) => updateStep(index, { targetId: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-cream-300 bg-white px-3 text-[12.5px]">
+                  <option value="">选择目标</option>
+                  {step.targetType === 'entry'
+                    ? entries.map((entry) => <option key={entry.id} value={entry.id}>{entry.occurredAt.slice(0, 10)} · {entry.title}</option>)
+                    : photos.map((photo) => <option key={photo.id} value={photo.id}>{photo.caption || photo.id}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+        ))}
+      </div>
+      <label className="block text-[12px] font-medium text-ink-700">完成寄语（200 字内）
+        <textarea value={draft.completionMessage} onChange={(event) => setDraft({ ...draft, completionMessage: event.target.value })} rows={3} className="mt-1 w-full rounded-xl border border-cream-300 bg-white px-3 py-2 text-[13px]" placeholder="三颗星都回来了……" />
+      </label>
     </>
   )
 }

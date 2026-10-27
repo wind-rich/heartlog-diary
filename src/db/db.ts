@@ -164,6 +164,7 @@ export const DEFAULT_PREFS: AppPrefs = {
     timeline: { enabled: false },
     quiz: { enabled: false },
     dateDraw: { enabled: false },
+    treasure: { enabled: false },
   },
 }
 

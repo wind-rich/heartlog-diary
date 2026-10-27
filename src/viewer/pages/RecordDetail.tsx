@@ -15,6 +15,7 @@ import {
 } from '../lib/data'
 import { EmptyState, Pill, SectionHead } from '../components/bits'
 import { PhotoTile, Lightbox } from '../components/Photos'
+import { TreasureTargetAction } from '../components/TreasureTargetAction'
 import { Suspense, useState } from 'react'
 
 export default function RecordDetail() {
@@ -105,6 +106,8 @@ export default function RecordDetail() {
         </div>
         <h1 className="mt-2 text-[20px] font-semibold leading-snug text-ink-900">{entry.title}</h1>
       </header>
+
+      <TreasureTargetAction targetType="entry" targetId={entry.id} />
 
       {photos.length > 0 && (
         <div className={clsx('grid gap-1.5', photos.length === 1 ? 'grid-cols-1' : photos.length === 2 ? 'grid-cols-2' : 'grid-cols-3')}>

@@ -38,6 +38,7 @@
       import { QUIZ_TEMPLATES, QUIZ_TEMPLATE_CATEGORIES } from '/src/lib/quizTemplates.ts'
       import { DATE_CARD_PACKS } from '/src/lib/dateCardPacks.ts'
       import { parseQuizSuggestions } from '/src/lib/quizRecommend.ts'
+      import { confirmTreasureTarget, findTreasureHunt, freshTreasureProgress, loadTreasureProgress, markTreasureAssisted, saveTreasureProgress, validateTreasureTargets } from '/src/viewer/game/treasure.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -230,6 +231,32 @@
         check('AI 题目：校验答案与来源白名单', parsedSuggestions.length === 1 && parsedSuggestions[0].sourceEntryIds.join(',') === 'te_1' && parsedSuggestions[0].correctIndex === 0, `${parsedSuggestions.length} 题`)
         check('推荐卡包：三套、每套六张、三类齐全', DATE_CARD_PACKS.length === 3 && DATE_CARD_PACKS.every((p) => p.cards.length === 6 && ['activity', 'place', 'surprise'].every((c) => p.cards.some((x) => x.category === c))), `${DATE_CARD_PACKS.length} 套`)
         check('场景推荐：至少六种且筛选值合法', DATE_SCENE_PRESETS.length >= 6 && DATE_SCENE_PRESETS.every((p) => ['any', 'indoor', 'outdoor'].includes(p.filters.setting) && ['any', 'short', 'half', 'day'].includes(p.filters.duration) && ['any', 'free', 'low', 'mid'].includes(p.filters.budget)), `${DATE_SCENE_PRESETS.length} 种`)
+
+        /* 12) 星球寻宝 */
+        const treasure = {
+          id: 'tr_1', kind: 'treasure', schemaVersion: 1, title: '三颗星', completionMessage: '都找到了',
+          steps: [
+            { id: 's1', clue: '第一条', targetType: 'entry', targetId: 'te_1' },
+            { id: 's2', clue: '第二条', targetType: 'photo', targetId: guessPool[0].id },
+            { id: 's3', clue: '第三条', targetType: 'entry', targetId: 'te_2' },
+          ],
+        }
+        check('寻宝：从公开内容中找到唯一关卡', findTreasureHunt([treasure])?.id === 'tr_1', findTreasureHunt([treasure])?.id || 'null')
+        check('寻宝：三步目标都存在时通过校验', validateTreasureTargets(treasure, timelineEntries, guessPool).length === 0, 'ok')
+        const brokenTreasure = { ...treasure, steps: [{ id: 'bad', clue: '失效', targetType: 'entry', targetId: 'e_missing' }] }
+        check('寻宝：目标缺失会阻止开局', validateTreasureTargets(brokenTreasure, timelineEntries, guessPool).length === 1, 'blocked')
+        let treasureProgress = freshTreasureProgress()
+        treasureProgress = confirmTreasureTarget(treasure, treasureProgress, 'entry', 'te_2')
+        check('寻宝：错误目标不推进', treasureProgress.stepIndex === 0, String(treasureProgress.stepIndex))
+        treasureProgress = confirmTreasureTarget(treasure, treasureProgress, 'entry', 'te_1')
+        treasureProgress = confirmTreasureTarget(treasure, treasureProgress, 'entry', 'te_1')
+        check('寻宝：正确目标推进且重复确认幂等', treasureProgress.stepIndex === 1, String(treasureProgress.stepIndex))
+        treasureProgress = markTreasureAssisted(treasureProgress)
+        check('寻宝：求助标记保留', treasureProgress.assisted === true, String(treasureProgress.assisted))
+        localStorage.removeItem('heartlog.game.treasure.v1.pub_A.tr_1')
+        saveTreasureProgress('pub_A', 'tr_1', treasureProgress)
+        check('寻宝：本机进度可恢复', loadTreasureProgress('pub_A', 'tr_1')?.stepIndex === 1, String(loadTreasureProgress('pub_A', 'tr_1')?.stepIndex))
+        check('寻宝：换发布版本不复用旧进度', loadTreasureProgress('pub_B', 'tr_1') === null, 'null')
 
         const failed = checks.filter((c) => !c.pass)
         window.__gameselftest = { done: true, total: checks.length, failed: failed.length, checks }

@@ -299,6 +299,14 @@ export interface GameContentOption {
   text: string
 }
 
+/** 寻宝步骤：首版只允许公开记录或照片，禁止任意 URL / 定位目标。 */
+export interface GameTreasureStep {
+  id: string
+  clue: string
+  targetType: 'entry' | 'photo'
+  targetId: string
+}
+
 export interface GameContent {
   id: string
   personId: string
@@ -319,9 +327,10 @@ export interface GameContent {
   category?: 'activity' | 'place' | 'surprise'
   text?: string
   tags?: string[]
-  /** treasure：第四版预留，第三版不提供编辑器 */
+  /** treasure：第四版寻宝标题、说明、三步与完成寄语 */
   title?: string
-  steps?: unknown[]
+  description?: string
+  steps?: GameTreasureStep[]
   completionMessage?: string
 }
 
