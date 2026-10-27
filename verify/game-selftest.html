@@ -39,6 +39,7 @@
       import { DATE_CARD_PACKS } from '/src/lib/dateCardPacks.ts'
       import { parseQuizSuggestions } from '/src/lib/quizRecommend.ts'
       import { confirmTreasureTarget, findTreasureHunt, freshTreasureProgress, loadTreasureProgress, markTreasureAssisted, saveTreasureProgress, validateTreasureTargets } from '/src/viewer/game/treasure.ts'
+      import { buildOfflineTreasureSuggestions, parseTreasureSuggestions } from '/src/lib/treasureRecommend.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -257,6 +258,18 @@
         saveTreasureProgress('pub_A', 'tr_1', treasureProgress)
         check('寻宝：本机进度可恢复', loadTreasureProgress('pub_A', 'tr_1')?.stepIndex === 1, String(loadTreasureProgress('pub_A', 'tr_1')?.stepIndex))
         check('寻宝：换发布版本不复用旧进度', loadTreasureProgress('pub_B', 'tr_1') === null, 'null')
+        const offlineTreasures = buildOfflineTreasureSuggestions(timelineEntries, guessPool)
+        check('寻宝推荐：离线模板三步目标有效', offlineTreasures.length >= 1 && offlineTreasures.every((item) => item.steps.length === 3 && item.steps.every((step) => step.targetId)), `${offlineTreasures.length} 个`)
+        const aiTreasureRaw = JSON.stringify({ hunts: [
+          { title: 'AI 寻宝', description: '测试用', steps: [
+            { clue: '第一条', targetType: 'entry', targetKey: 'e1' },
+            { clue: '第二条', targetType: 'photo', targetKey: 'p1' },
+            { clue: '第三条', targetType: 'entry', targetKey: 'e2' },
+          ], completionMessage: '完成' },
+          { title: '坏寻宝', description: '', steps: [{ clue: '失效', targetType: 'entry', targetKey: 'missing' }], completionMessage: '坏' },
+        ] })
+        const aiTreasures = parseTreasureSuggestions(aiTreasureRaw, timelineEntries, guessPool)
+        check('寻宝推荐：AI 只接受白名单目标', aiTreasures.length === 1 && aiTreasures[0].steps.length === 3 && aiTreasures[0].steps.every((step) => step.targetId), `${aiTreasures.length} 个`)
 
         const failed = checks.filter((c) => !c.pass)
         window.__gameselftest = { done: true, total: checks.length, failed: failed.length, checks }

@@ -935,6 +935,24 @@ try {
   if (!recommendation.aiHint) problems.push('按记录生成的入口或未启用提示缺失')
   notes.push(`推荐：模板可填入=${recommendation.templateSaved}，卡包新增=${recommendation.packAdded} 张，按记录入口=${recommendation.aiHint}`)
 
+  const treasureRecommend = await cdp.evaluate(`(async () => {
+    const section = [...document.querySelectorAll('section')].find(s => s.innerText.includes('寻宝推荐'));
+    const button = section ? [...section.querySelectorAll('button')].find(b => b.innerText.trim() === '填入并核对') : null;
+    button?.click();
+    await new Promise(r => setTimeout(r, 500));
+    const dialog = document.querySelector('[role="dialog"]');
+    const result = {
+      opened: Boolean(dialog),
+      title: dialog?.querySelector('input')?.value || '',
+      steps: dialog ? ['第 1 颗星', '第 2 颗星', '第 3 颗星'].every(text => dialog.innerText.includes(text)) : false,
+    };
+    [...(dialog?.querySelectorAll('button') || [])].find(b => b.innerText.trim() === '取消')?.click();
+    await new Promise(r => setTimeout(r, 300));
+    return result;
+  })()`)
+  if (!treasureRecommend.opened || !treasureRecommend.title || !treasureRecommend.steps) problems.push(`寻宝离线推荐异常：${JSON.stringify(treasureRecommend)}`)
+  notes.push(`寻宝推荐：离线模板可填入=${treasureRecommend.opened && treasureRecommend.title && treasureRecommend.steps}`)
+
   const treasure = await cdp.evaluate(`(async () => {
     const setVal = (el, v) => {
       const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;

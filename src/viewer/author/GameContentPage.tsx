@@ -9,6 +9,7 @@ import { useApp } from '../../state/app'
 import { GAME_CONTENT_SCHEMA_VERSION, gameContentKindLabel, validateGameContent } from '../../lib/gameContent'
 import { QUIZ_TEMPLATES, QUIZ_TEMPLATE_CATEGORIES, type QuizTemplate } from '../../lib/quizTemplates'
 import { aiQuizSuggestions, type QuizSuggestion } from '../../lib/quizRecommend'
+import { aiTreasureSuggestion, buildOfflineTreasureSuggestions, type TreasureSuggestion } from '../../lib/treasureRecommend'
 import { DATE_CARD_PACKS, type DateCardPack } from '../../lib/dateCardPacks'
 import { aiReady } from '../../lib/ai'
 
@@ -169,6 +170,21 @@ export default function GameContentPage() {
     })
   }
 
+  const applyTreasureSuggestion = (suggestion: TreasureSuggestion) => {
+    setDraft({
+      ...blankDraft('treasure'),
+      title: suggestion.title,
+      description: suggestion.description,
+      steps: suggestion.steps.map((step) => ({
+        id: uid('ts_'),
+        clue: step.clue,
+        targetType: step.targetType,
+        targetId: step.targetId,
+      })),
+      completionMessage: suggestion.completionMessage,
+    })
+  }
+
   const addPack = async (pack: DateCardPack) => {
     if (!personId) return
     const existingTexts = new Set(rows.filter((row) => row.kind === 'dateCard').map((row) => (row.text ?? '').trim()))
@@ -249,6 +265,13 @@ export default function GameContentPage() {
             onEdit={(row) => setDraft(fromRow(row))}
             onToggle={toggle}
             onDelete={remove}
+          />
+          <TreasureRecommendPanel
+            entries={entries}
+            photos={photos}
+            aiConfig={aiConfig}
+            cloudSignedIn={Boolean(cloudUser)}
+            onUseSuggestion={applyTreasureSuggestion}
           />
           <ContentSection
             title="星球寻宝"
@@ -487,6 +510,156 @@ function QuizRecommendPanel({
                   <button type="button" onClick={() => onUseSuggestion(suggestion)} className="btn-ghost mt-2 min-h-11 px-3 text-[12px]">填入并核对</button>
                 </div>
               ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function treasureTargetLabel(step: { targetType: 'entry' | 'photo'; targetId: string }, entries: Entry[], photos: Photo[]): string {
+  if (step.targetType === 'entry') return entries.find((entry) => entry.id === step.targetId)?.title || '⚠ 目标缺失'
+  const photo = photos.find((photo) => photo.id === step.targetId)
+  return photo ? (photo.caption || '未命名照片') : '⚠ 目标缺失'
+}
+
+function TreasureSuggestionCard({ suggestion, entries, photos, onUse }: {
+  suggestion: TreasureSuggestion
+  entries: Entry[]
+  photos: Photo[]
+  onUse: (suggestion: TreasureSuggestion) => void
+}) {
+  return (
+    <div className="rounded-xl border border-cream-200 bg-white px-3 py-2.5">
+      <div className="text-[12.5px] font-medium text-ink-900">{suggestion.title}</div>
+      {suggestion.description && <p className="mt-1 text-[11px] leading-relaxed text-ink-500">{suggestion.description}</p>}
+      <div className="mt-2 space-y-1.5">
+        {suggestion.steps.map((step, index) => (
+          <div key={`${step.targetType}-${step.targetId}-${index}`} className="text-[11px] leading-relaxed text-ink-600">
+            <span className="text-amber-700">第 {index + 1} 颗星 · </span>{step.clue}
+            <span className="text-ink-400">（目标：{treasureTargetLabel(step, entries, photos)}）</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-[11px] leading-relaxed text-amber-800">完成寄语：{suggestion.completionMessage}</div>
+      <button type="button" onClick={() => onUse(suggestion)} className="btn-ghost mt-2 min-h-11 px-3 text-[12px]">填入并核对</button>
+    </div>
+  )
+}
+
+function TreasureRecommendPanel({ entries, photos, aiConfig, cloudSignedIn, onUseSuggestion }: {
+  entries: Entry[]
+  photos: Photo[]
+  aiConfig: ReturnType<typeof useApp>['aiConfig']
+  cloudSignedIn: boolean
+  onUseSuggestion: (suggestion: TreasureSuggestion) => void
+}) {
+  const [mode, setMode] = useState<'offline' | 'records'>('offline')
+  const offlineSuggestions = useMemo(() => buildOfflineTreasureSuggestions(entries, photos), [entries, photos])
+  const recentEntries = entries.slice(0, 8)
+  const recentPhotos = photos.slice(0, 8)
+  const [selectedEntries, setSelectedEntries] = useState<string[]>([])
+  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([])
+  const [suggestion, setSuggestion] = useState<TreasureSuggestion | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const ready = aiReady(aiConfig, cloudSignedIn)
+
+  const generate = async () => {
+    const pickedEntries = recentEntries.filter((entry) => selectedEntries.includes(entry.id))
+    const pickedPhotos = recentPhotos.filter((photo) => selectedPhotos.includes(photo.id))
+    if (!pickedEntries.length && !pickedPhotos.length) {
+      setError('先勾选至少一条记录或一张照片')
+      return
+    }
+    setBusy(true)
+    setError('')
+    setSuggestion(null)
+    try {
+      setSuggestion(await aiTreasureSuggestion(aiConfig, pickedEntries, pickedPhotos, cloudSignedIn))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-rose-200/70 bg-[#FFF8F5] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-ink-900"><Lightbulb size={16} className="text-rose-deep" /> 寻宝推荐</h2>
+          <p className="mt-0.5 text-[11.5px] text-ink-500">离线模板用现有内容起底稿；AI 只用勾选内容，生成后仍需核对目标和线索。</p>
+        </div>
+        <div className="flex gap-1 rounded-full bg-white p-1">
+          <button type="button" onClick={() => setMode('offline')} className={`min-h-11 rounded-full px-3 text-[12px] ${mode === 'offline' ? 'bg-rose-deep text-white' : 'text-ink-500'}`}>离线模板</button>
+          <button type="button" onClick={() => setMode('records')} className={`min-h-11 rounded-full px-3 text-[12px] ${mode === 'records' ? 'bg-rose-deep text-white' : 'text-ink-500'}`}>按内容生成</button>
+        </div>
+      </div>
+
+      {mode === 'offline' ? (
+        offlineSuggestions.length ? (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {offlineSuggestions.map((item, index) => (
+              <TreasureSuggestionCard key={`${item.title}-${index}`} suggestion={item} entries={entries} photos={photos} onUse={onUseSuggestion} />
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-[12px] text-ink-500">现有内容还不够组成三步寻宝，可以先用「按内容生成」或手动创建。</p>
+        )
+      ) : (
+        <>
+          <div className="mt-3 rounded-xl border border-cream-200 bg-white p-3">
+            <div className="text-[12px] font-medium text-ink-700">选择取材内容（最近 8 条 / 8 张）</div>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <div>
+                <div className="text-[11px] text-ink-400">记录</div>
+                {recentEntries.length ? (
+                  <div className="mt-1 space-y-1.5">
+                    {recentEntries.map((entry) => (
+                      <label key={entry.id} className="flex items-start gap-2 text-[12px] leading-relaxed text-ink-700">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={selectedEntries.includes(entry.id)}
+                          onChange={(event) => setSelectedEntries((ids) => event.target.checked ? [...ids, entry.id] : ids.filter((id) => id !== entry.id))}
+                        />
+                        <span>{entry.occurredAt.slice(0, 10)} · {entry.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : <p className="mt-1 text-[12px] text-ink-400">还没有可选记录。</p>}
+              </div>
+              <div>
+                <div className="text-[11px] text-ink-400">照片</div>
+                {recentPhotos.length ? (
+                  <div className="mt-1 space-y-1.5">
+                    {recentPhotos.map((photo) => (
+                      <label key={photo.id} className="flex items-start gap-2 text-[12px] leading-relaxed text-ink-700">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={selectedPhotos.includes(photo.id)}
+                          onChange={(event) => setSelectedPhotos((ids) => event.target.checked ? [...ids, photo.id] : ids.filter((id) => id !== photo.id))}
+                        />
+                        <span>{photo.takenAt?.slice(0, 10) || '时间未知'} · {photo.caption || '未命名照片'}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : <p className="mt-1 text-[12px] text-ink-400">还没有可选照片。</p>}
+              </div>
+            </div>
+            <button type="button" onClick={() => void generate()} disabled={!ready || busy} className="btn-primary mt-3 inline-flex min-h-11 items-center gap-1.5 px-3 text-[12px] disabled:opacity-40">
+              <WandSparkles size={14} /> {busy ? '正在生成…' : '生成 1 个寻宝'}
+            </button>
+            {!ready && <p className="mt-2 text-[11.5px] leading-relaxed text-amber-700">AI 未启用。可以先使用离线模板，或在设置 → AI 增强里配置后再来。</p>}
+            {error && <p className="mt-2 text-[11.5px] leading-relaxed text-rose-700">{error}</p>}
+          </div>
+          {suggestion && (
+            <div className="mt-2 space-y-2">
+              <p className="text-[11.5px] text-amber-700">以下只是 AI 草稿：请核对线索是否好找、目标是否合适，再保存。</p>
+              <TreasureSuggestionCard suggestion={suggestion} entries={entries} photos={photos} onUse={onUseSuggestion} />
             </div>
           )}
         </>
