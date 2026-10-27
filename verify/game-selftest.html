@@ -34,7 +34,10 @@
       import { buildMemoryBoxQueue, relatedEntryForPhoto } from '/src/viewer/game/memoryBox.ts'
       import { buildTimelinePool, buildTimelinePuzzle, gradeTimeline, loadTimelineRecord, moveTimelineItem, saveTimelineRecord } from '/src/viewer/game/timeline.ts'
       import { buildQuizQuestions, loadQuizRecord, saveQuizRecord, validQuizItems } from '/src/viewer/game/quiz.ts'
-      import { allDateCards, DEFAULT_FILTERS, drawDateCombo, loadDateFavorites, saveDateFavorite } from '/src/viewer/game/dateDraw.ts'
+      import { allDateCards, DATE_SCENE_PRESETS, DEFAULT_FILTERS, drawDateCombo, loadDateFavorites, saveDateFavorite } from '/src/viewer/game/dateDraw.ts'
+      import { QUIZ_TEMPLATES, QUIZ_TEMPLATE_CATEGORIES } from '/src/lib/quizTemplates.ts'
+      import { DATE_CARD_PACKS } from '/src/lib/dateCardPacks.ts'
+      import { parseQuizSuggestions } from '/src/lib/quizRecommend.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -214,6 +217,19 @@
         localStorage.removeItem('heartlog.game.dateDraw.v1.pub_A')
         const favorites = saveDateFavorite('pub_A', { activity: draw1.combo.activity, place: draw1.combo.place, surprise: draw1.combo.surprise }, '2026-10-27T00:00:00.000Z')
         check('活动抽卡：喜欢组合只存本机并可去重', favorites.length === 1 && loadDateFavorites('pub_A').length === 1, favorites[0]?.id || 'none')
+
+        /* 11) 推荐内容 */
+        check('题库模板：至少 20 条且分类完整', QUIZ_TEMPLATES.length >= 20 && QUIZ_TEMPLATE_CATEGORIES.every((c) => QUIZ_TEMPLATES.some((t) => t.category === c)), `${QUIZ_TEMPLATES.length} 条`)
+        check('题库模板：每题至少两个候选且题干不重复', QUIZ_TEMPLATES.every((t) => t.options.length >= 2) && new Set(QUIZ_TEMPLATES.map((t) => t.prompt)).size === QUIZ_TEMPLATES.length, 'unique')
+        const aiRaw = JSON.stringify({ questions: [
+          { prompt: '记录里他做了什么？', options: ['做饭', '跑步', '睡觉'], correctIndex: 0, explanation: '记录里有', sourceEntryIds: ['e1', 'e_missing'] },
+          { prompt: '坏题', options: ['只有一个'], correctIndex: 0, sourceEntryIds: ['e2'] },
+          { prompt: '没有来源', options: ['A', 'B'], correctIndex: 0, sourceEntryIds: [] },
+        ] })
+        const parsedSuggestions = parseQuizSuggestions(aiRaw, [{ id: 'te_1', occurredAt: '2026-10-01', title: '做饭', content: '' }], 3)
+        check('AI 题目：校验答案与来源白名单', parsedSuggestions.length === 1 && parsedSuggestions[0].sourceEntryIds.join(',') === 'te_1' && parsedSuggestions[0].correctIndex === 0, `${parsedSuggestions.length} 题`)
+        check('推荐卡包：三套、每套六张、三类齐全', DATE_CARD_PACKS.length === 3 && DATE_CARD_PACKS.every((p) => p.cards.length === 6 && ['activity', 'place', 'surprise'].every((c) => p.cards.some((x) => x.category === c))), `${DATE_CARD_PACKS.length} 套`)
+        check('场景推荐：至少六种且筛选值合法', DATE_SCENE_PRESETS.length >= 6 && DATE_SCENE_PRESETS.every((p) => ['any', 'indoor', 'outdoor'].includes(p.filters.setting) && ['any', 'short', 'half', 'day'].includes(p.filters.duration) && ['any', 'free', 'low', 'mid'].includes(p.filters.budget)), `${DATE_SCENE_PRESETS.length} 种`)
 
         const failed = checks.filter((c) => !c.pass)
         window.__gameselftest = { done: true, total: checks.length, failed: failed.length, checks }

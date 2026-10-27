@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, CircleCheck, CircleOff, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, CircleCheck, CircleOff, Lightbulb, PackagePlus, Pencil, Plus, Sparkles, Trash2, WandSparkles } from 'lucide-react'
 import { db, nowISO, uid } from '../../db/db'
 import type { Entry, GameContent, GameContentKind, Photo } from '../../db/types'
 import { useAuthorReload } from './AuthorReload'
 import { useConfirm, useToast } from '../../components/ui'
+import { useApp } from '../../state/app'
 import { GAME_CONTENT_SCHEMA_VERSION, gameContentKindLabel, validateGameContent } from '../../lib/gameContent'
+import { QUIZ_TEMPLATES, QUIZ_TEMPLATE_CATEGORIES, type QuizTemplate } from '../../lib/quizTemplates'
+import { aiQuizSuggestions, type QuizSuggestion } from '../../lib/quizRecommend'
+import { DATE_CARD_PACKS, type DateCardPack } from '../../lib/dateCardPacks'
+import { aiReady } from '../../lib/ai'
 
 interface Draft {
   id?: string
@@ -60,6 +65,7 @@ export default function GameContentPage() {
   const toast = useToast()
   const confirm = useConfirm()
   const reloadAuthor = useAuthorReload()
+  const { aiConfig, cloudUser } = useApp()
   const [rows, setRows] = useState<GameContent[]>([])
   const [entries, setEntries] = useState<Entry[]>([])
   const [photos, setPhotos] = useState<Photo[]>([])
@@ -127,6 +133,56 @@ export default function GameContentPage() {
     toast('已删除')
   }
 
+  const applyTemplate = (template: QuizTemplate) => {
+    const options = template.options.map((text, index) => ({ id: `opt_${Date.now().toString(36)}_${index}`, text }))
+    setDraft({
+      ...blankDraft('quiz'),
+      prompt: template.prompt,
+      options,
+      correctOptionId: '',
+      explanation: '',
+    })
+  }
+
+  const applySuggestion = (suggestion: QuizSuggestion) => {
+    const options = suggestion.options.map((text, index) => ({ id: `opt_${Date.now().toString(36)}_${index}`, text }))
+    setDraft({
+      ...blankDraft('quiz'),
+      prompt: suggestion.prompt,
+      options,
+      correctOptionId: options[suggestion.correctIndex]?.id ?? '',
+      explanation: suggestion.explanation,
+      sourceEntryId: suggestion.sourceEntryIds[0] ?? '',
+    })
+  }
+
+  const addPack = async (pack: DateCardPack) => {
+    if (!personId) return
+    const existingTexts = new Set(rows.filter((row) => row.kind === 'dateCard').map((row) => (row.text ?? '').trim()))
+    const fresh = pack.cards.filter((card) => !existingTexts.has(card.text.trim()))
+    if (!fresh.length) {
+      toast('这个卡包已经添加过了')
+      return
+    }
+    const now = nowISO()
+    await db.gameContent.bulkPut(fresh.map((card) => ({
+      id: uid('gc_'),
+      personId,
+      kind: 'dateCard',
+      schemaVersion: GAME_CONTENT_SCHEMA_VERSION,
+      enabled: true,
+      category: card.category,
+      text: card.text,
+      tags: card.tags,
+      createdAt: now,
+      updatedAt: now,
+    })))
+    await load()
+    await reloadAuthor?.()
+    toast(`已添加「${pack.title}」${fresh.length} 张卡`)
+  }
+
+
   const quizRows = rows.filter((row) => row.kind === 'quiz')
   const cardRows = rows.filter((row) => row.kind === 'dateCard')
 
@@ -152,6 +208,13 @@ export default function GameContentPage() {
         <div className="rounded-2xl border border-cream-200 bg-white/70 px-4 py-10 text-center text-[12px] text-ink-400">正在读取互动内容…</div>
       ) : (
         <>
+          <QuizRecommendPanel
+            entries={entries}
+            aiConfig={aiConfig}
+            cloudSignedIn={Boolean(cloudUser)}
+            onUseTemplate={applyTemplate}
+            onUseSuggestion={applySuggestion}
+          />
           <ContentSection
             title="关于他的五道题"
             count={quizRows.length}
@@ -162,6 +225,7 @@ export default function GameContentPage() {
             onToggle={toggle}
             onDelete={remove}
           />
+          <DatePackPanel packs={DATE_CARD_PACKS} rows={cardRows} onAdd={addPack} />
           <ContentSection
             title="今天一起做什么"
             count={cardRows.length}
@@ -236,6 +300,147 @@ function toRow(draft: Draft, personId: string, existing?: GameContent): GameCont
     text: draft.text.trim(),
     tags: draft.tags.split(/[，,\s]+/).map((tag) => tag.trim()).filter(Boolean),
   }
+}
+
+function QuizRecommendPanel({
+  entries,
+  aiConfig,
+  cloudSignedIn,
+  onUseTemplate,
+  onUseSuggestion,
+}: {
+  entries: Entry[]
+  aiConfig: ReturnType<typeof useApp>['aiConfig']
+  cloudSignedIn: boolean
+  onUseTemplate: (template: QuizTemplate) => void
+  onUseSuggestion: (suggestion: QuizSuggestion) => void
+}) {
+  const [mode, setMode] = useState<'templates' | 'records'>('templates')
+  const [category, setCategory] = useState<string>(QUIZ_TEMPLATE_CATEGORIES[0])
+  const [selected, setSelected] = useState<string[]>([])
+  const [suggestions, setSuggestions] = useState<QuizSuggestion[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const ready = aiReady(aiConfig, cloudSignedIn)
+  const recent = entries.slice(0, 8)
+  const templates = QUIZ_TEMPLATES.filter((template) => template.category === category)
+
+  const generate = async () => {
+    const picked = recent.filter((entry) => selected.includes(entry.id))
+    if (!picked.length) {
+      setError('先勾选至少一条记录')
+      return
+    }
+    setBusy(true)
+    setError('')
+    setSuggestions([])
+    try {
+      const result = await aiQuizSuggestions(aiConfig, picked, 3, cloudSignedIn)
+      setSuggestions(result)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-rose-200/70 bg-[#FFF8F5] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-ink-900"><Lightbulb size={16} className="text-rose-deep" /> 起步推荐</h2>
+          <p className="mt-0.5 text-[11.5px] text-ink-500">模板不需要 AI；按记录生成只产出草稿，答案必须自己核对。</p>
+        </div>
+        <div className="flex gap-1 rounded-full bg-white p-1">
+          <button type="button" onClick={() => setMode('templates')} className={`min-h-11 rounded-full px-3 text-[12px] ${mode === 'templates' ? 'bg-rose-deep text-white' : 'text-ink-500'}`}>模板库</button>
+          <button type="button" onClick={() => setMode('records')} className={`min-h-11 rounded-full px-3 text-[12px] ${mode === 'records' ? 'bg-rose-deep text-white' : 'text-ink-500'}`}>按记录生成</button>
+        </div>
+      </div>
+
+      {mode === 'templates' ? (
+        <>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {QUIZ_TEMPLATE_CATEGORIES.map((name) => (
+              <button key={name} type="button" onClick={() => setCategory(name)} className={`min-h-11 rounded-full px-3 text-[11.5px] ${category === name ? 'bg-rose-deep/10 text-rose-deep' : 'bg-white text-ink-500'}`}>{name}</button>
+            ))}
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {templates.map((template) => (
+              <button key={template.id} type="button" onClick={() => onUseTemplate(template)} className="rounded-xl border border-cream-200 bg-white px-3 py-2.5 text-left transition hover:border-rose-soft/60">
+                <div className="text-[12.5px] leading-relaxed text-ink-800">{template.prompt}</div>
+                <div className="mt-1 text-[11px] text-ink-400">{template.options.join(' / ')} · 点一下填入并选答案</div>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-3 rounded-xl border border-cream-200 bg-white p-3">
+            <div className="text-[12px] font-medium text-ink-700">选择取材记录（最近 8 条）</div>
+            {recent.length === 0 ? (
+              <p className="mt-2 text-[12px] text-ink-400">还没有可取材的记录。</p>
+            ) : (
+              <div className="mt-2 space-y-1.5">
+                {recent.map((entry) => (
+                  <label key={entry.id} className="flex items-start gap-2 text-[12px] leading-relaxed text-ink-700">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selected.includes(entry.id)}
+                      onChange={(event) => setSelected((ids) => event.target.checked ? [...ids, entry.id] : ids.filter((id) => id !== entry.id))}
+                    />
+                    <span>{entry.occurredAt.slice(0, 10)} · {entry.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <button type="button" onClick={() => void generate()} disabled={!ready || busy || !recent.length} className="btn-primary mt-3 inline-flex min-h-11 items-center gap-1.5 px-3 text-[12px] disabled:opacity-40">
+              <WandSparkles size={14} /> {busy ? '正在生成…' : '生成 3 道题'}
+            </button>
+            {!ready && <p className="mt-2 text-[11.5px] leading-relaxed text-amber-700">AI 未启用。可以先使用模板库，或在设置 → AI 增强里配置后再来。</p>}
+            {error && <p className="mt-2 text-[11.5px] leading-relaxed text-rose-700">{error}</p>}
+          </div>
+          {suggestions.length > 0 && (
+            <div className="mt-2 space-y-2">
+              <p className="text-[11.5px] text-amber-700">以下只是 AI 草稿：答案可能猜错，请逐题核对后保存。</p>
+              {suggestions.map((suggestion, index) => (
+                <div key={`${suggestion.prompt}-${index}`} className="rounded-xl border border-cream-200 bg-white px-3 py-2.5">
+                  <div className="text-[12.5px] font-medium text-ink-800">{suggestion.prompt}</div>
+                  <div className="mt-1 text-[11px] text-ink-500">建议答案：{suggestion.options[suggestion.correctIndex]} · 来源 {suggestion.sourceEntryIds.length} 条</div>
+                  <button type="button" onClick={() => onUseSuggestion(suggestion)} className="btn-ghost mt-2 min-h-11 px-3 text-[12px]">填入并核对</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function DatePackPanel({ packs, rows, onAdd }: { packs: DateCardPack[]; rows: GameContent[]; onAdd: (pack: DateCardPack) => void }) {
+  const existing = new Set(rows.map((row) => (row.text ?? '').trim()))
+  return (
+    <section className="rounded-2xl border border-cream-200 bg-white/75 p-4">
+      <h2 className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-ink-900"><PackagePlus size={16} className="text-rose-deep" /> 推荐卡包</h2>
+      <p className="mt-0.5 text-[11.5px] text-ink-500">一键添加成组的自定义卡；已存在的同文案卡不会重复添加，添加后仍可单独编辑。</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {packs.map((pack) => {
+          const count = pack.cards.filter((card) => existing.has(card.text.trim())).length
+          return (
+            <div key={pack.id} className="flex flex-col rounded-xl border border-cream-200 bg-white p-3">
+              <div className="text-[13px] font-semibold text-ink-900">{pack.title}</div>
+              <p className="mt-1 flex-1 text-[11.5px] leading-relaxed text-ink-500">{pack.description}</p>
+              <div className="mt-2 text-[10.5px] text-ink-400">{count}/{pack.cards.length} 张已存在</div>
+              <button type="button" onClick={() => onAdd(pack)} disabled={count === pack.cards.length} className="btn-ghost mt-2 min-h-11 px-3 text-[12px] disabled:opacity-40">
+                {count === pack.cards.length ? '已添加' : '添加此卡包'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
 }
 
 function ContentSection({

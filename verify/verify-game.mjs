@@ -485,11 +485,20 @@ try {
   await sleep(400)
   const afterPlace = await cdp.evaluate(`document.querySelector('[data-date-card="place"]')?.dataset.cardId || ''`)
   if (!beforePlace || beforePlace !== afterPlace) problems.push('活动抽卡锁定地点后被重抽')
+  await cdp.evaluate(`document.querySelector('[data-scene-preset="home-short"]')?.click()`)
+  await sleep(350)
+  const sceneState = await cdp.evaluate(`(() => ({
+    pressed: document.querySelector('[data-scene-preset="home-short"]')?.getAttribute('aria-pressed') === 'true',
+    cards: document.querySelectorAll('[data-date-card]').length,
+    complete: [...document.querySelectorAll('[data-date-card]')].every(c => Boolean(c.dataset.cardId)),
+    locked: document.querySelectorAll('[data-date-card][data-locked="true"]').length,
+  }))()`)
+  if (!sceneState.pressed || sceneState.cards !== 3 || !sceneState.complete || sceneState.locked !== 0) problems.push(`场景推荐异常：${JSON.stringify(sceneState)}`)
   await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('喜欢这组'))?.click())()`)
   await sleep(300)
   const favoriteKeys = await cdp.evaluate(`Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.dateDraw.v1.'))`)
   if (!favoriteKeys.length) problems.push('活动抽卡收藏没有写入本机')
-  notes.push('活动抽卡：三类组合、锁定重抽与本机收藏通过')
+  notes.push('活动抽卡：三类组合、场景推荐、锁定重抽与本机收藏通过')
   await cdp.shot('10-date-draw.png')
 
   /* ---------- C. 响应式与访客边界 ---------- */

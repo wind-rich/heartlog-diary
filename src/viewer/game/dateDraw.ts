@@ -165,6 +165,23 @@ export interface DateDrawFilters {
 
 export const DEFAULT_FILTERS: DateDrawFilters = { setting: 'any', duration: 'any', budget: 'any' }
 
+/** 访客端场景推荐：只是把筛选条件一键组合，仍然从同一套规则里抽卡。 */
+export interface DateScenePreset {
+  id: string
+  title: string
+  description: string
+  filters: DateDrawFilters
+}
+
+export const DATE_SCENE_PRESETS: DateScenePreset[] = [
+  { id: 'home-short', title: '在家待一会儿', description: '室内、两小时内，不用特意准备', filters: { setting: 'indoor', duration: 'short', budget: 'any' } },
+  { id: 'walk', title: '出门走走', description: '室外、短时间，适合临时起意', filters: { setting: 'outdoor', duration: 'short', budget: 'any' } },
+  { id: 'half-day', title: '只有半天', description: '半天以内，不排一整天', filters: { setting: 'any', duration: 'half', budget: 'any' } },
+  { id: 'free', title: '不花什么钱', description: '免费优先，也可以在家', filters: { setting: 'any', duration: 'any', budget: 'free' } },
+  { id: 'quiet', title: '安静一点', description: '室内、半天以内，慢慢待着', filters: { setting: 'indoor', duration: 'half', budget: 'any' } },
+  { id: 'serious', title: '认真约一次', description: '半天、百元级预算', filters: { setting: 'any', duration: 'half', budget: 'mid' } },
+]
+
 export function matchFilters(card: DateCard, filters: DateDrawFilters): boolean {
   if (filters.setting !== 'any' && card.setting && card.setting !== filters.setting) return false
   if (filters.duration !== 'any' && card.duration && card.duration !== filters.duration) return false

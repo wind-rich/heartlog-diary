@@ -905,6 +905,36 @@ try {
   })()`)
   if (!disabledQuiz.ok) problems.push(`五道题停用失败：${JSON.stringify(disabledQuiz)}`)
 
+  const recommendation = await cdp.evaluate(`(async () => {
+    const template = [...document.querySelectorAll('button')].find(b => b.innerText.includes('第一次见面时，他给我的第一印象'));
+    template?.click();
+    await new Promise(r => setTimeout(r, 400));
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { error: '模板没有填入编辑弹窗' };
+    const prompt = dialog.querySelector('textarea')?.value || '';
+    dialog.querySelector('input[type="radio"]')?.click();
+    [...dialog.querySelectorAll('button')].find(b => b.innerText.trim() === '保存')?.click();
+    await new Promise(r => setTimeout(r, 800));
+    const db = await new Promise((res) => { const q = indexedDB.open('heartlog'); q.onsuccess = () => res(q.result) });
+    const before = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    const templateSaved = before.some((row) => row.prompt === '第一次见面时，他给我的第一印象更接近哪一种？');
+    const packButton = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === '添加此卡包');
+    packButton?.click();
+    await new Promise(r => setTimeout(r, 900));
+    const after = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    return {
+      prompt,
+      templateSaved,
+      packAdded: after.filter((row) => row.kind === 'dateCard').length - before.filter((row) => row.kind === 'dateCard').length,
+      aiHint: document.body.innerText.includes('AI 未启用') || document.body.innerText.includes('按记录生成'),
+    };
+  })()`)
+  if (!recommendation.templateSaved || !recommendation.prompt.includes('第一印象')) problems.push(`题库模板应用失败：${JSON.stringify(recommendation)}`)
+  if (recommendation.packAdded !== 6) problems.push(`推荐卡包应添加 6 张，实际 ${recommendation.packAdded}`)
+  if (!recommendation.aiHint) problems.push('按记录生成的入口或未启用提示缺失')
+  notes.push(`推荐：模板可填入=${recommendation.templateSaved}，卡包新增=${recommendation.packAdded} 张，按记录入口=${recommendation.aiHint}`)
+
   // 打开第三版三个开关，再确认作者端大厅出现对应卡片
   await cdp.send('Page.navigate', { url: `${BASE}/#/settings` })
   await sleep(2200)

@@ -7,6 +7,7 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   DEFAULT_FILTERS,
+  DATE_SCENE_PRESETS,
   DURATION_LABELS,
   SETTING_LABELS,
   allDateCards,
@@ -91,6 +92,7 @@ export default function DateDrawGame() {
   const cards = useMemo(() => allDateCards(gameContent), [gameContent])
 
   const [filters, setFilters] = useState<DateDrawFilters>(DEFAULT_FILTERS)
+  const [activeScene, setActiveScene] = useState<string | null>(null)
   const [combo, setCombo] = useState<Combo>({})
   const [locks, setLocks] = useState<Locks>(NO_LOCKS)
   const [notice, setNotice] = useState<string | null>(null)
@@ -138,7 +140,18 @@ export default function DateDrawGame() {
   const changeFilter = (patch: Partial<DateDrawFilters>) => {
     const next = { ...filters, ...patch }
     setFilters(next)
+    setActiveScene(null)
     roll(next)
+  }
+
+  const applyScene = (preset: (typeof DATE_SCENE_PRESETS)[number]) => {
+    // 场景推荐是一次全新组合：先解锁，避免「室内场景 + 已锁室外地点」互相冲突
+    const noLocks = { ...NO_LOCKS }
+    setLocks(noLocks)
+    locksRef.current = noLocks
+    setFilters(preset.filters)
+    setActiveScene(preset.id)
+    roll(preset.filters)
   }
 
   const toggleLock = (category: DateCardCategory) => {
@@ -161,6 +174,7 @@ export default function DateDrawGame() {
 
   const resetFilters = () => {
     setFilters(DEFAULT_FILTERS)
+    setActiveScene(null)
     roll(DEFAULT_FILTERS)
   }
 
@@ -170,6 +184,28 @@ export default function DateDrawGame() {
         title="今天一起做什么"
         description="从活动、地点、小彩蛋里各抽一张，拼成今天的小小约会。结果只在这台设备上，不会读取定位或商家信息，也不会写进任务和日程。"
       />
+
+      <section className="rounded-2xl border border-cream-200 bg-white/75 p-4">
+        <div className="flex items-center gap-1.5 text-[12px] font-medium text-ink-700">
+          <Sparkles size={14} className="text-rose-deep" /> 场景推荐
+        </div>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-400">不想逐项选？点一个场景，直接换一组按规则配好的建议。</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {DATE_SCENE_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => applyScene(preset)}
+              title={preset.description}
+              data-scene-preset={preset.id}
+              aria-pressed={activeScene === preset.id}
+              className={`min-h-11 rounded-full px-3 text-[12px] ${activeScene === preset.id ? 'bg-rose-deep text-white' : 'btn-ghost'}`}
+            >
+              {preset.title}
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section className="space-y-2.5 rounded-2xl border border-cream-200 bg-white/75 p-4">
         <FilterRow
