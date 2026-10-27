@@ -12,6 +12,7 @@ import type { AppPrefs } from '../../db/types'
 import type { PublishedSnapshot, PublicPhoto, PublicEntry, ViewerGamesConfig } from '../types'
 import { VIEWER_FORMAT_VERSION } from '../types'
 import { GAME_IDS } from '../game/config'
+import { mapPublicGameContent } from '../../lib/gameContent'
 
 const urls: string[] = []
 
@@ -45,7 +46,7 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
   // 展示端配置里的开关（T6 小游戏等）来自作者偏好
   const prefs = await getMeta<AppPrefs>('prefs', DEFAULT_PREFS)
 
-  const [entries, photos, preferences, wishes, gifts, health, insights, summaries, statuses] = await Promise.all([
+  const [entries, photos, preferences, wishes, gifts, health, insights, summaries, statuses, gameContentRows] = await Promise.all([
     db.entries.toArray(),
     db.photos.toArray(),
     db.preferences.toArray(),
@@ -55,6 +56,7 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
     db.insights.toArray(),
     db.summaries.toArray(),
     db.dailyStatus.toArray(),
+    db.gameContent.toArray(),
   ])
 
   const publicPhotos: PublicPhoto[] = byIdDesc(photos).map((p) => {
@@ -93,6 +95,11 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
     quick: !!e.quick,
   }))
 
+  const publicGameContent = mapPublicGameContent(gameContentRows, {
+    entryIds: new Set(publicEntries.map((entry) => entry.id)),
+    photoIds: new Set(publicPhotos.map((photo) => photo.id)),
+  })
+
   const gameEnabled = prefs.gameEnabled !== false
   const games = Object.fromEntries(
     GAME_IDS.map((id) => [
@@ -119,6 +126,7 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
         insights: insights.length,
         summaries: summaries.length,
         statuses: statuses.length,
+        gameContent: publicGameContent.items.length,
       },
       contentHash: '',
     },
@@ -227,6 +235,7 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
       worry: r.worry,
       note: r.note,
     })),
+    gameContent: publicGameContent.items,
   }
 
   return snapshot

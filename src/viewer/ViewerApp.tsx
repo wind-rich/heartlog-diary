@@ -87,6 +87,7 @@ function prepareSnapshot(
     summaries: snap.summaries.length,
     statuses: snap.statuses.length,
     anniversaries: snap.anniversaries.length,
+    gameContent: snap.gameContent?.length ?? 0,
   }
   for (const [key, n] of Object.entries(actual)) {
     if (typeof counts[key] === 'number' && counts[key] !== n) {

@@ -178,13 +178,13 @@ try {
     const text = document.body.innerText;
     return {
       title: text.includes('回忆游乐园'),
-      cards: ['记忆配对','拼回这一刻','猜猜是哪一张','今日回忆盲盒'].filter(name => text.includes(name)),
+      cards: ['记忆配对','拼回这一刻','猜猜是哪一张','今日回忆盲盒','把时光排好','关于他的五道题','今天一起做什么'].filter(name => text.includes(name)),
       random: [...document.querySelectorAll('button')].some(b => b.innerText.includes('随便玩一个')),
       hash: location.hash,
     };
   })()`)
-  if (!hall.title || hall.cards.length !== 4 || !hall.random) problems.push(`互动大厅不完整：${JSON.stringify(hall)}`)
-  notes.push(`大厅：${hall.cards.length}/4 款玩法可见`)
+  if (!hall.title || hall.cards.length !== 7 || !hall.random) problems.push(`互动大厅不完整：${JSON.stringify(hall)}`)
+  notes.push(`大厅：${hall.cards.length}/7 款玩法可见`)
   await cdp.shot('01-game-hall.png')
 
   /* ---------- B1. 记忆配对 ---------- */
@@ -398,6 +398,100 @@ try {
   notes.push('盲盒：直接打开与连续不重复抽取通过')
   await cdp.shot('07-memory-box.png')
 
+  /* ---------- B5. 时光排序 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=timeline` })
+  await sleep(1800)
+  const timelineStart = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('开始排序'));
+    const result = { setup: !!btn, text: document.body.innerText.includes('不同日期') || document.body.innerText.includes('标准') };
+    btn?.click();
+    return result;
+  })()`)
+  if (!timelineStart.setup) problems.push(`时光排序没有开始按钮：${JSON.stringify(timelineStart)}`)
+  await sleep(900)
+  const timelinePlaying = await cdp.evaluate(`(() => ({
+    cards: document.querySelectorAll('[data-timeline-card]').length,
+    datesHidden: !document.body.innerText.match(/2026 年/),
+    moves: [...document.querySelectorAll('button')].filter(b => b.innerText.includes('上移') || b.getAttribute('aria-label')?.includes('上移')).length,
+  }))()`)
+  if (timelinePlaying.cards !== 3 || timelinePlaying.datesHidden !== true || timelinePlaying.moves < 3) problems.push(`时光排序开局异常：${JSON.stringify(timelinePlaying)}`)
+  await cdp.evaluate(`(() => {
+    const move = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.includes('下移一位'));
+    move?.click();
+    return !!move;
+  })()`)
+  await sleep(250)
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('排好了，提交'))?.click())()`)
+  await sleep(500)
+  const timelineDone = await cdp.evaluate(`(() => ({
+    result: document.body.innerText.includes('位置正确') || document.body.innerText.includes('正确位置'),
+    reveal: [...document.querySelectorAll('button')].some(b => b.innerText.includes('揭晓完整时间线')),
+    keys: Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.timeline.v1.')),
+  }))()`)
+  if (!timelineDone.result || !timelineDone.reveal || !timelineDone.keys.length) problems.push(`时光排序提交异常：${JSON.stringify(timelineDone)}`)
+  notes.push('时光排序：上移/下移、提交判定与成绩记录通过')
+  await cdp.shot('08-timeline.png')
+
+  /* ---------- B6. 关于他的五道题 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=quiz` })
+  await sleep(1800)
+  const quizStart = await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('开始答题'));
+    const result = { setup: !!btn, count: document.body.innerText.includes('5 题') };
+    btn?.click();
+    return result;
+  })()`)
+  if (!quizStart.setup || !quizStart.count) problems.push(`五道题开局异常：${JSON.stringify(quizStart)}`)
+  await sleep(900)
+  for (let i = 0; i < 5; i++) {
+    const state = await cdp.evaluate(`(() => {
+      const options = [...document.querySelectorAll('[data-quiz-option]')];
+      if (!options.length) return { options: 0 };
+      options[0].click();
+      return { options: options.length };
+    })()`)
+    if (state.options < 2) problems.push(`第 ${i + 1} 题选项不足：${JSON.stringify(state)}`)
+    await sleep(250)
+    await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('下一题') || b.innerText.includes('查看结果'))?.click())()`)
+    await sleep(300)
+  }
+  const quizDone = await cdp.evaluate(`(() => ({
+    done: document.body.innerText.includes('这一局完成了'),
+    source: document.body.innerText.includes('跳过') && document.body.innerText.includes('辅助'),
+    keys: Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.quiz.v1.')),
+  }))()`)
+  if (!quizDone.done || !quizDone.keys.length) problems.push(`五道题结果异常：${JSON.stringify(quizDone)}`)
+  notes.push('五道题：5 题作答、锁定与成绩记录通过')
+  await cdp.shot('09-quiz.png')
+
+  /* ---------- B7. 今天一起做什么 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample&scene=demo#/game?play=dateDraw` })
+  await sleep(1800)
+  const dateDrawState = await cdp.evaluate(`(() => ({
+    cards: document.querySelectorAll('[data-date-card]').length,
+    texts: [...document.querySelectorAll('[data-date-card]')].map(c => c.innerText.trim()).filter(Boolean),
+    lock: [...document.querySelectorAll('button')].some(b => b.innerText.includes('锁定')),
+  }))()`)
+  if (dateDrawState.cards !== 3 || !dateDrawState.lock) problems.push(`活动抽卡开局异常：${JSON.stringify(dateDrawState)}`)
+  const beforePlace = await cdp.evaluate(`document.querySelector('[data-date-card="place"]')?.dataset.cardId || ''`)
+  await cdp.evaluate(`(() => {
+    const card = document.querySelector('[data-date-card="place"]');
+    const btn = card?.querySelector('button[aria-label*="锁定"]');
+    btn?.click();
+    return !!btn;
+  })()`)
+  await sleep(200)
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('再抽一次'))?.click())()`)
+  await sleep(400)
+  const afterPlace = await cdp.evaluate(`document.querySelector('[data-date-card="place"]')?.dataset.cardId || ''`)
+  if (!beforePlace || beforePlace !== afterPlace) problems.push('活动抽卡锁定地点后被重抽')
+  await cdp.evaluate(`(() => [...document.querySelectorAll('button')].find(b => b.innerText.includes('喜欢这组'))?.click())()`)
+  await sleep(300)
+  const favoriteKeys = await cdp.evaluate(`Object.keys(localStorage).filter(k => k.startsWith('heartlog.game.dateDraw.v1.'))`)
+  if (!favoriteKeys.length) problems.push('活动抽卡收藏没有写入本机')
+  notes.push('活动抽卡：三类组合、锁定重抽与本机收藏通过')
+  await cdp.shot('10-date-draw.png')
+
   /* ---------- C. 响应式与访客边界 ---------- */
   for (const size of [{ width: 320, height: 740, mobile: true }, { width: 1440, height: 900, mobile: false }]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { ...size, deviceScaleFactor: size.mobile ? 2 : 1 })
@@ -411,7 +505,7 @@ try {
   const dbs = await cdp.evaluate(`(async () => { try { return (await indexedDB.databases()).length } catch { return -1 } })()`)
   if (dbs !== 0) problems.push(`小游戏页面创建了 ${dbs} 个 IndexedDB（应完全不用数据库）`)
   const lsKeys = await cdp.evaluate(`Object.keys(localStorage)`)
-  const allowed = (k) => k.startsWith('hl-') || /^heartlog\.game\.(memory|puzzle|photoGuess|memoryBox)\.v\d+\./.test(k)
+  const allowed = (k) => k.startsWith('hl-') || /^heartlog\.game\.(memory|puzzle|photoGuess|memoryBox|timeline|quiz|dateDraw)\.v\d+\./.test(k)
   const unexpected = lsKeys.filter((k) => !allowed(k))
   if (unexpected.length) problems.push(`localStorage 出现预期之外的键：${unexpected.join(', ')}`)
   if (cdp.writes.length) problems.push(`页面发出了非 GET 请求：${cdp.writes.slice(0, 2).join(' | ')}`)
@@ -427,7 +521,7 @@ try {
     for (const p of problems) console.log(`  · ${p}`)
     process.exitCode = 1
   } else {
-    console.log('✓ T6 回忆游乐园通过：大厅、配对升级、拼图、局部猜图、回忆盲盒均可用；成绩只在本机，不建库不发写请求。')
+    console.log('✓ T6 回忆游乐园通过：大厅、配对升级、拼图、局部猜图、回忆盲盒、时光排序、五道题、活动抽卡均可用；成绩只在本机，不建库不发写请求。')
   }
   console.log(`截图：${OUT}`)
 } finally {

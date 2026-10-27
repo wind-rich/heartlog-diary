@@ -388,14 +388,22 @@
         check('AI 只能作为新章节插入', appended.ok && appended.memoir?.sections.length === 2, `${appended.memoir?.sections.length} 章`)
         check('AI 章节保留引用映射', appended.memoir?.sections[1].citeMap?.E1 === 'e_bundle_1', 'E1 → e_bundle_1')
 
-        /* 10) 备份 v3 兼容 */
+        /* 10) 备份 v4 兼容 */
+        await db.gameContent.put({
+          id: 'gc_bundle_quiz', personId: 'p_bundle', kind: 'quiz', schemaVersion: 1, enabled: true,
+          prompt: '备份里的题目', options: [{ id: 'a', text: '对' }, { id: 'b', text: '错' }], correctOptionId: 'a',
+          sourceEntryIds: ['e_bundle_1'], createdAt: nowISO(), updatedAt: nowISO(),
+        })
         const pack = await collectBackupData()
-        check('备份版本升到 v3', BACKUP_VERSION === 3 && pack.manifest.version === 3, `v${pack.manifest.version}`)
+        check('备份版本升到 v4', BACKUP_VERSION === 4 && pack.manifest.version === 4, `v${pack.manifest.version}`)
         check('备份包含回忆录', (pack.data.memoirs ?? []).length === 1, `${pack.data.memoirs?.length} 本`)
+        check('备份包含互动内容', (pack.data.gameContent ?? []).length === 1, `${pack.data.gameContent?.length} 条`)
         const before = await db.memoirs.count()
-        const v2pack = { ...pack.data, memoirs: undefined }
-        await applyBackupData(v2pack, pack.photoBlobs, 'merge')
+        const gameBefore = await db.gameContent.count()
+        const v3pack = { ...pack.data, memoirs: undefined, gameContent: undefined }
+        await applyBackupData(v3pack, pack.photoBlobs, 'merge')
         check('旧包（缺 memoirs 字段）不会清掉本机回忆录', (await db.memoirs.count()) === before, `本机仍有 ${await db.memoirs.count()} 本`)
+        check('旧包（缺 gameContent 字段）不会清掉本机互动内容', (await db.gameContent.count()) === gameBefore, `本机仍有 ${await db.gameContent.count()} 条`)
 
         /* 11) 删除会进墓碑（换设备不会复活） */
         await deleteMemoir(memoir.id)
@@ -403,6 +411,9 @@
         const tomb = await db.tombstones.get(`memoirs:${memoir.id}`)
         check('删除回忆录会记墓碑', Boolean(tomb), `memoirs:${memoir.id}`)
         check('删除后本机不再有这本', (await db.memoirs.count()) === 0, `${await db.memoirs.count()} 本`)
+        await db.gameContent.delete('gc_bundle_quiz')
+        await new Promise((r) => setTimeout(r, 30))
+        check('删除互动内容会记墓碑', Boolean(await db.tombstones.get('gameContent:gc_bundle_quiz')), 'gameContent:gc_bundle_quiz')
 
         /* 12) 关闭 AI 也能导出 */
         const noAi = await createMarkdownBundle()

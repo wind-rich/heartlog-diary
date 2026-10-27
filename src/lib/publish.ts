@@ -18,6 +18,7 @@ import { db } from '../db/db'
 import { cloud, getCloudSession } from './cloud'
 import { resizeImage } from './photo'
 import { buildLocalSnapshot } from '../viewer/data/local'
+import { assertGameContentPublishable } from './gameContent'
 import type { PublishedSnapshot } from '../viewer/types'
 
 export const PUBLIC_SNAPSHOT_TABLE = 'heartlog_public_snapshot'
@@ -202,6 +203,7 @@ export async function publishToCloud(
   const onProgress = opts.onProgress ?? (() => {})
 
   onProgress({ phase: 'prepare', done: 0, total: 1, label: '整理内容' })
+  await assertGameContentPublishable()
   const snapshot = await buildLocalSnapshot()
   if (!snapshot) throw new PublishError('本机还没有内容，先记点什么再发布')
 
@@ -419,6 +421,7 @@ const DIFF_KEYS = [
   'summaries',
   'statuses',
   'anniversaries',
+  'gameContent',
 ] as const
 
 const DIFF_LABEL: Record<string, string> = {
@@ -432,6 +435,7 @@ const DIFF_LABEL: Record<string, string> = {
   summaries: '回顾',
   statuses: '每日状态',
   anniversaries: '纪念日',
+  gameContent: '玩法内容',
 }
 
 /**

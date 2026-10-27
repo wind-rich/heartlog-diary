@@ -345,6 +345,8 @@ export function Switch({
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={checked}
       onClick={() => onChange(!checked)}
       className="w-full flex items-start gap-3 text-left py-2.5"
     >

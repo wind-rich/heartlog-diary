@@ -28,6 +28,7 @@ const Tasks = lazy(() => import('./viewer/pages/Tasks'))
  * 访客端连路由都不该有，更不该下载这段代码。
  */
 const Memoir = lazy(() => import('./viewer/pages/Memoir'))
+const GameContentPage = lazy(() => import('./viewer/author/GameContentPage'))
 
 /**
  * 作者端：不再使用旧的「今天/时间线/回顾」界面，
@@ -82,6 +83,14 @@ function AuthorViewer() {
             <Route path="album" element={<Album />} />
             <Route path="game" element={<GamePage />} />
             <Route path="archive" element={<Archive />} />
+            <Route
+              path="game-content"
+              element={
+                <Suspense fallback={<Loading text="正在打开互动内容…" />}>
+                  <GameContentPage />
+                </Suspense>
+              }
+            />
             <Route
               path="tasks"
               element={

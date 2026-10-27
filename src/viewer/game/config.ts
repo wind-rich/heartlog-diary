@@ -1,12 +1,25 @@
 import type { GameId, ViewerConfig } from '../types'
 
-export const GAME_IDS: GameId[] = ['memory', 'puzzle', 'photoGuess', 'memoryBox']
+export const GAME_IDS: GameId[] = ['memory', 'puzzle', 'photoGuess', 'memoryBox', 'timeline', 'quiz', 'dateDraw']
 
-export const GAME_META: Record<GameId, { title: string; description: string; duration: string; minPhotos: number }> = {
-  memory: { title: '记忆配对', description: '翻开两张牌，找回同一张照片。', duration: '1～3 分钟', minPhotos: 3 },
-  puzzle: { title: '拼回这一刻', description: '点击两块交换位置，把照片拼完整。', duration: '1～3 分钟', minPhotos: 1 },
-  photoGuess: { title: '猜猜是哪一张', description: '从照片局部，认出完整的回忆。', duration: '1～2 分钟', minPhotos: 4 },
-  memoryBox: { title: '今日回忆盲盒', description: '打开一颗星，遇见一段已经公开的回忆。', duration: '约 1 分钟', minPhotos: 1 },
+export interface GameMeta {
+  title: string
+  description: string
+  duration: string
+  minPhotos: number
+  minEntries: number
+  minContent: number
+  contentKind?: 'quiz' | 'dateCard'
+}
+
+export const GAME_META: Record<GameId, GameMeta> = {
+  memory: { title: '记忆配对', description: '翻开两张牌，找回同一张照片。', duration: '1～3 分钟', minPhotos: 3, minEntries: 0, minContent: 0 },
+  puzzle: { title: '拼回这一刻', description: '点击两块交换位置，把照片拼完整。', duration: '1～3 分钟', minPhotos: 1, minEntries: 0, minContent: 0 },
+  photoGuess: { title: '猜猜是哪一张', description: '从照片局部，认出完整的回忆。', duration: '1～2 分钟', minPhotos: 4, minEntries: 0, minContent: 0 },
+  memoryBox: { title: '今日回忆盲盒', description: '打开一颗星，遇见一段已经公开的回忆。', duration: '约 1 分钟', minPhotos: 1, minEntries: 0, minContent: 0 },
+  timeline: { title: '把时光排好', description: '把几张回忆卡按发生时间排回正确顺序。', duration: '1～2 分钟', minPhotos: 0, minEntries: 3, minContent: 0 },
+  quiz: { title: '关于他的五道题', description: '答一组由作者写下的小问题。', duration: '1～3 分钟', minPhotos: 0, minEntries: 0, minContent: 1, contentKind: 'quiz' },
+  dateDraw: { title: '今天一起做什么', description: '抽一组活动、地点和小彩蛋，给今天一点灵感。', duration: '约 1 分钟', minPhotos: 0, minEntries: 0, minContent: 0, contentKind: 'dateCard' },
 }
 
 export function isGameId(value: string | null): value is GameId {

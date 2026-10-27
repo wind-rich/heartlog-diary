@@ -196,10 +196,42 @@ export interface PublicDailyStatus {
 }
 
 /* ------------------------------------------------------------------ */
+/* T6 作者发布的游戏内容（只含公开白名单字段）                          */
+/* ------------------------------------------------------------------ */
+
+export interface PublicQuizOption {
+  id: string
+  text: string
+}
+
+export interface PublicQuizContent {
+  id: string
+  kind: 'quiz'
+  schemaVersion: number
+  prompt: string
+  options: PublicQuizOption[]
+  correctOptionId: string
+  explanation?: string
+  photoId?: string
+  sourceEntryIds: string[]
+}
+
+export interface PublicDateCardContent {
+  id: string
+  kind: 'dateCard'
+  schemaVersion: number
+  category: 'activity' | 'place' | 'surprise'
+  text: string
+  tags: string[]
+}
+
+export type PublicGameContent = PublicQuizContent | PublicDateCardContent
+
+/* ------------------------------------------------------------------ */
 /* 展示配置（逐字段白名单，不从整个 meta 复制）                          */
 /* ------------------------------------------------------------------ */
 
-export type GameId = 'memory' | 'puzzle' | 'photoGuess' | 'memoryBox'
+export type GameId = 'memory' | 'puzzle' | 'photoGuess' | 'memoryBox' | 'timeline' | 'quiz' | 'dateDraw'
 
 export interface ViewerGameConfig {
   enabled: boolean
@@ -261,6 +293,8 @@ export interface PublishedSnapshot {
   insights: PublicInsight[]
   summaries: PublicSummary[]
   statuses: PublicDailyStatus[]
+  /** T6 第三版：作者明确选择公开的游戏内容；旧快照没有该字段 */
+  gameContent?: PublicGameContent[]
   /**
    * 仅原型使用的草稿差异，不是公开发布格式的一部分。
    * 正式实现由发布服务在提交前计算逐类差异。

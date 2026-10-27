@@ -8,6 +8,7 @@ import type {
   AppPrefs,
   DailyStatus,
   Entry,
+  GameContent,
   Gift,
   HealthRecord,
   MetaRow,
@@ -37,6 +38,7 @@ export class HeartLogDB extends Dexie {
   taskReminders!: Table<TaskReminder, string>
   taskOccurrences!: Table<TaskOccurrence, string>
   memoirs!: Table<Memoir, string>
+  gameContent!: Table<GameContent, string>
 
   constructor() {
     super('heartlog')
@@ -83,6 +85,13 @@ export class HeartLogDB extends Dexie {
      */
     this.version(5).stores({
       memoirs: 'id, personId, status, updatedAt',
+    })
+    /**
+     * v6：T6 第三版玩法内容（五道题 / 活动抽卡，第四版寻宝预留）。
+     * 仍是增量新增，不动 v1~v5 的任何表；旧库升级时自动补空表。
+     */
+    this.version(6).stores({
+      gameContent: 'id, personId, kind, enabled, updatedAt',
     })
   }
 }
@@ -152,6 +161,9 @@ export const DEFAULT_PREFS: AppPrefs = {
     puzzle: { enabled: false },
     photoGuess: { enabled: false },
     memoryBox: { enabled: false },
+    timeline: { enabled: false },
+    quiz: { enabled: false },
+    dateDraw: { enabled: false },
   },
 }
 

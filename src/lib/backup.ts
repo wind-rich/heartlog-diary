@@ -3,6 +3,7 @@ import { db, nowISO, setMeta } from '../db/db'
 import type {
   DailyStatus,
   Entry,
+  GameContent,
   Gift,
   HealthRecord,
   Person,
@@ -25,8 +26,9 @@ import { withDeletionsSuppressed } from './tombstones'
  *     旧包读入时这三项缺失 → 视为空数组，不覆盖已有新任务（大纲 T8-A 要求）。
  *     新包被旧版本应用读取时只会忽略这三个字段，其它内容照常恢复。
  * v3：T5 新增 memoirs（回忆录）。同样遵循「缺字段视为空数组、不覆盖本机」。
+ * v4：T6 第三版新增 gameContent（五道题 / 活动抽卡；寻宝为第四版预留）。
  */
-export const BACKUP_VERSION = 3
+export const BACKUP_VERSION = 4
 export const BACKUP_APP_ID = 'heartlog'
 
 /** data.json 中的照片元信息（不含二进制） */
@@ -50,6 +52,8 @@ export interface BackupData {
   taskOccurrences?: TaskOccurrence[]
   /** v3 起：T5 回忆录（同样是私有内容，不进公开快照） */
   memoirs?: Memoir[]
+  /** v4 起：T6 作者互动内容；公开前仍需作者显式发布 */
+  gameContent?: GameContent[]
 }
 
 export interface BackupManifest {
@@ -100,6 +104,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     taskReminders,
     taskOccurrences,
     memoirs,
+    gameContent,
   ] = await Promise.all([
     db.persons.toArray(),
     db.preferences.toArray(),
@@ -116,6 +121,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     db.taskReminders.toArray(),
     db.taskOccurrences.toArray(),
     db.memoirs.toArray(),
+    db.gameContent.toArray(),
   ])
 
   const photoMetas: PhotoMeta[] = []
@@ -145,6 +151,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
     taskReminders,
     taskOccurrences,
     memoirs,
+    gameContent,
   }
 
   const manifest: BackupManifest = {
@@ -167,6 +174,7 @@ export async function collectBackupData(): Promise<CollectedBackup> {
       taskReminders: taskReminders.length,
       taskOccurrences: taskOccurrences.length,
       memoirs: memoirs.length,
+      gameContent: gameContent.length,
     },
     note: '这是「心意簿」的完整备份，包含全部文字记录与照片原图。请妥善保管。',
   }
@@ -320,6 +328,8 @@ export async function applyBackupData(
     ['taskOccurrences', db.taskOccurrences, restoredOccurrences(data.taskOccurrences ?? [])],
     // v3 起的回忆录。旧备份没有这一项时是空数组，等于「不导入」，不会清掉本机文稿。
     ['memoirs', db.memoirs, data.memoirs ?? []],
+    // v4 起的互动内容。旧备份缺字段时不导入，也不清本机题库/卡片。
+    ['gameContent', db.gameContent, data.gameContent ?? []],
   ] as const
 
   const runImport = () =>
@@ -341,6 +351,7 @@ export async function applyBackupData(
       db.taskReminders,
       db.taskOccurrences,
       db.memoirs,
+      db.gameContent,
     ],
     async () => {
       if (mode === 'replace') {
@@ -476,6 +487,8 @@ export async function wipeAllData(): Promise<void> {
       db.tasks,
       db.taskReminders,
       db.taskOccurrences,
+      db.memoirs,
+      db.gameContent,
     ],
     async () => {
       await Promise.all([
@@ -494,6 +507,8 @@ export async function wipeAllData(): Promise<void> {
         db.tasks.clear(),
         db.taskReminders.clear(),
         db.taskOccurrences.clear(),
+        db.memoirs.clear(),
+        db.gameContent.clear(),
       ])
     },
     ),

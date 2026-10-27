@@ -794,6 +794,140 @@ try {
     return true;
   })()`)
 
+  /* ---------- T6 第三版：互动内容作者闭环 ---------- */
+  await cdp.send('Page.navigate', { url: `${BASE}/#/settings` })
+  await sleep(2200)
+  const settingsGame = await cdp.evaluate(`(() => ({
+    manage: [...document.querySelectorAll('button')].some(b => b.innerText.includes('管理五道题与抽卡内容')),
+    switches: ['把时光排好', '关于他的五道题', '今天一起做什么'].every((t) => document.body.innerText.includes(t)),
+  }))()`)
+  if (!settingsGame.manage || !settingsGame.switches) problems.push(`设置页互动内容入口不完整：${JSON.stringify(settingsGame)}`)
+
+  await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes('管理五道题与抽卡内容'));
+    btn?.click();
+    return !!btn;
+  })()`)
+  await sleep(1600)
+  if (!(await cdp.evaluate(`location.hash === '#/game-content' && document.body.innerText.includes('互动内容')`))) problems.push('互动内容管理页没有打开')
+
+  const createdQuiz = await cdp.evaluate(`(async () => {
+    const setVal = (el, v) => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const section = [...document.querySelectorAll('section')].find(s => s.innerText.includes('关于他的五道题'));
+    const add = section ? [...section.querySelectorAll('button')].find(b => b.innerText.includes('新增')) : null;
+    add?.click();
+    await new Promise(r => setTimeout(r, 500));
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { error: '题目编辑弹窗未打开' };
+    setVal(dialog.querySelector('textarea'), '自测：他更喜欢晴天还是雨天？');
+    const textInputs = [...dialog.querySelectorAll('input:not([type="radio"])')];
+    setVal(textInputs[0], '晴天');
+    setVal(textInputs[1], '雨天');
+    dialog.querySelector('input[type="radio"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    const save = [...dialog.querySelectorAll('button')].find(b => b.innerText.trim() === '保存');
+    save?.click();
+    await new Promise(r => setTimeout(r, 900));
+    const db = await new Promise((res) => { const q = indexedDB.open('heartlog'); q.onsuccess = () => res(q.result) });
+    const rows = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    const quiz = rows.find((row) => row.prompt === '自测：他更喜欢晴天还是雨天？');
+    return { ok: Boolean(quiz), count: rows.length, id: quiz?.id ?? '' };
+  })()`)
+  if (!createdQuiz.ok) problems.push(`五道题创建失败：${JSON.stringify(createdQuiz)}`)
+
+  await cdp.send('Page.reload', { ignoreCache: true })
+  await sleep(2200)
+  const quizPersisted = await cdp.evaluate(`document.body.innerText.includes('自测：他更喜欢晴天还是雨天？')`)
+  if (!quizPersisted) problems.push('五道题刷新后没有保留')
+
+  const editedQuiz = await cdp.evaluate(`(async () => {
+    const setVal = (el, v) => {
+      const proto = HTMLTextAreaElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const card = [...document.querySelectorAll('article')].find(a => a.innerText.includes('自测：他更喜欢晴天还是雨天？'));
+    const edit = card ? [...card.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '编辑') : null;
+    edit?.click();
+    await new Promise(r => setTimeout(r, 500));
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { error: '编辑弹窗未打开' };
+    setVal(dialog.querySelector('textarea'), '自测：他最喜欢晴天还是雨天？');
+    [...dialog.querySelectorAll('button')].find(b => b.innerText.trim() === '保存')?.click();
+    await new Promise(r => setTimeout(r, 900));
+    return { ok: document.body.innerText.includes('自测：他最喜欢晴天还是雨天？') };
+  })()`)
+  if (!editedQuiz.ok) problems.push(`五道题编辑失败：${JSON.stringify(editedQuiz)}`)
+
+  const createdCard = await cdp.evaluate(`(async () => {
+    const setVal = (el, v) => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const section = [...document.querySelectorAll('section')].find(s => s.innerText.includes('今天一起做什么'));
+    const add = section ? [...section.querySelectorAll('button')].find(b => b.innerText.includes('新增')) : null;
+    add?.click();
+    await new Promise(r => setTimeout(r, 500));
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { error: '抽卡编辑弹窗未打开' };
+    const select = dialog.querySelector('select');
+    setVal(select, 'surprise');
+    setVal(dialog.querySelector('textarea'), '自测：交换一句今天的谢谢');
+    setVal(dialog.querySelector('input'), 'setting:any，budget:free，duration:short');
+    [...dialog.querySelectorAll('button')].find(b => b.innerText.trim() === '保存')?.click();
+    await new Promise(r => setTimeout(r, 900));
+    const db = await new Promise((res) => { const q = indexedDB.open('heartlog'); q.onsuccess = () => res(q.result) });
+    const rows = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    const card = rows.find((row) => row.text === '自测：交换一句今天的谢谢');
+    return { ok: Boolean(card), kind: card?.kind ?? '', category: card?.category ?? '' };
+  })()`)
+  if (!createdCard.ok || createdCard.kind !== 'dateCard' || createdCard.category !== 'surprise') problems.push(`活动卡创建失败：${JSON.stringify(createdCard)}`)
+
+  const disabledQuiz = await cdp.evaluate(`(async () => {
+    const card = [...document.querySelectorAll('article')].find(a => a.innerText.includes('自测：他最喜欢晴天还是雨天？'));
+    const toggle = card ? [...card.querySelectorAll('button')].find(b => ['停用', '启用'].includes(b.innerText.trim())) : null;
+    toggle?.click();
+    await new Promise(r => setTimeout(r, 600));
+    const db = await new Promise((res) => { const q = indexedDB.open('heartlog'); q.onsuccess = () => res(q.result) });
+    const rows = await new Promise((res) => { const q = db.transaction('gameContent').objectStore('gameContent').getAll(); q.onsuccess = () => res(q.result) });
+    db.close();
+    const quiz = rows.find((row) => row.prompt === '自测：他最喜欢晴天还是雨天？');
+    return { enabled: quiz?.enabled, ok: quiz?.enabled === false };
+  })()`)
+  if (!disabledQuiz.ok) problems.push(`五道题停用失败：${JSON.stringify(disabledQuiz)}`)
+
+  // 打开第三版三个开关，再确认作者端大厅出现对应卡片
+  await cdp.send('Page.navigate', { url: `${BASE}/#/settings` })
+  await sleep(2200)
+  for (const label of ['把时光排好', '关于他的五道题', '今天一起做什么']) {
+    await cdp.evaluate(`(() => {
+      const btn = [...document.querySelectorAll('button')].find(b => b.innerText.includes(${JSON.stringify(label)}));
+      const on = btn?.getAttribute('aria-checked') === 'true' || btn?.querySelector('.bg-rose-deep');
+      if (btn && !on) btn.click();
+      return !!btn;
+    })()`)
+    await sleep(1000)
+  }
+  await cdp.send('Page.navigate', { url: `${BASE}/#/game` })
+  await sleep(2200)
+  const authorHall = await cdp.evaluate(`(() => ({
+    timeline: document.body.innerText.includes('把时光排好'),
+    quiz: document.body.innerText.includes('关于他的五道题'),
+    dateDraw: document.body.innerText.includes('今天一起做什么'),
+  }))()`)
+  if (!authorHall.timeline || !authorHall.quiz || !authorHall.dateDraw) problems.push(`作者端大厅缺第三版玩法：${JSON.stringify(authorHall)}`)
+  notes.push(`互动内容：创建/刷新/编辑/停用通过，大厅第三版入口=${JSON.stringify(authorHall)}`)
+  await cdp.shot('10-game-content.png')
+
   if (cdp.logs.length) problems.push(`控制台错误：${cdp.logs.slice(0, 2).join(' | ')}`)
 } finally {
   try {

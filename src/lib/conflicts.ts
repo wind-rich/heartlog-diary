@@ -45,6 +45,7 @@ const ENTITY_LABEL: Record<string, string> = {
   photos: '照片',
   insights: '画像',
   summaries: '回顾',
+  gameContent: '玩法内容',
 }
 
 export function conflictEntityLabel(entity: string): string {
@@ -63,7 +64,7 @@ export function conflictSummary(c: ConflictCopy): string {
 /* ------------------------------------------------------------------ */
 
 /** 冲突副本落到哪张本机表；照片没有二进制，不能取回 */
-const ENTITY_TABLE: Record<string, 'persons' | 'preferences' | 'entries' | 'dailyStatus' | 'health' | 'gifts' | 'wishes' | 'insights' | 'summaries'> = {
+const ENTITY_TABLE: Record<string, 'persons' | 'preferences' | 'entries' | 'dailyStatus' | 'health' | 'gifts' | 'wishes' | 'insights' | 'summaries' | 'memoirs' | 'gameContent'> = {
   persons: 'persons',
   preferences: 'preferences',
   entries: 'entries',
@@ -73,6 +74,8 @@ const ENTITY_TABLE: Record<string, 'persons' | 'preferences' | 'entries' | 'dail
   wishes: 'wishes',
   insights: 'insights',
   summaries: 'summaries',
+  memoirs: 'memoirs',
+  gameContent: 'gameContent',
 }
 
 export interface RestoreResult {

@@ -1,5 +1,5 @@
 /**
- * v3 → v4 升级验证：真实用户数据库是 v3，新版打开时 Dexie 会做增量迁移。
+ * v3 → v6 升级验证：真实用户数据库是 v3，新版打开时 Dexie 会做增量迁移。
  *
  * 这个验证必须做，原因是升级失败的表现是**作者端直接打不开**（白屏或抛错），
  * 而离线自测里只覆盖了 v1 → 最新，跳过了「已经用到 v3 的真实库」这条路径。
@@ -180,7 +180,7 @@ try {
   console.log('已造出 v3 库：', JSON.stringify(seeded))
   if (seeded?.error) problems.push(`造 v3 库失败：${seeded.error}`)
 
-  // 现在用应用自己的 db 模块打开它 → 触发 v3 → v4 升级
+  // 现在用应用自己的 db 模块打开它 → 触发 v3 → v6 升级
   await cdp.send('Page.navigate', { url: `${BASE}/` })
   await sleep(3000)
 
@@ -214,10 +214,17 @@ try {
       id: 'mb_v5_probe', personId: 'p_v3', title: '升级后新建的回忆录', sections: [],
       status: 'draft', createdAt: now, updatedAt: now,
     })
+    // v6（T6 互动内容）同样必须能在老库上直接写
+    await db.gameContent.put({
+      id: 'gc_v6_probe', personId: 'p_v3', kind: 'quiz', schemaVersion: 1, enabled: true,
+      prompt: '升级后新建的题目', options: [{ id: 'a', text: '对' }, { id: 'b', text: '错' }],
+      correctOptionId: 'a', sourceEntryIds: ['e_v3'], createdAt: now, updatedAt: now,
+    })
     const tk = await db.tasks.get('tk_v4_probe')
     const tr = await db.taskReminders.get('tr_v4_probe')
     const to = await db.taskOccurrences.get('tk_v4_probe@1')
     const mb = await db.memoirs.get('mb_v5_probe')
+    const gc = await db.gameContent.get('gc_v6_probe')
 
     return {
       verno: db.verno,
@@ -232,15 +239,16 @@ try {
       meta: meta ? meta.value : null,
       newTablesWritable: Boolean(tk && tr && to),
       memoirWritable: Boolean(mb),
+      gameContentWritable: Boolean(gc),
     }
   })().catch((e) => ({ error: String(e && e.stack ? e.stack.split('\\n')[0] : e) }))`)
 
   console.log('升级后：', JSON.stringify(after, null, 1))
 
   if (after?.error) {
-    problems.push(`v3→v4 升级失败：${after.error}`)
+    problems.push(`v3→v6 升级失败：${after.error}`)
   } else {
-    if (after.verno !== 5) problems.push(`升级后版本号应为 5（含 T5 回忆录表），实为 ${after.verno}`)
+    if (after.verno !== 6) problems.push(`升级后版本号应为 6（含 T6 互动内容表），实为 ${after.verno}`)
     if (after.person !== '升级测试人物') problems.push('人物档案在升级后丢失')
     if (!Array.isArray(after.personTags) || after.personTags[0] !== 'v3') problems.push('人物标签在升级后损坏')
     if (after.entry !== 'v3 时代的记录') problems.push('记录在升级后丢失')
@@ -251,7 +259,8 @@ try {
     if (after.meta !== true) problems.push('meta 设置在升级后丢失')
     if (!after.newTablesWritable) problems.push('新增的三张待办表在升级后不可读写')
     if (!after.memoirWritable) problems.push('v5 新增的回忆录表在升级后不可读写')
-    for (const t of ['tasks', 'taskReminders', 'taskOccurrences', 'memoirs']) {
+    if (!after.gameContentWritable) problems.push('v6 新增的互动内容表在升级后不可读写')
+    for (const t of ['tasks', 'taskReminders', 'taskOccurrences', 'memoirs', 'gameContent']) {
       if (!after.tables.includes(t)) problems.push(`升级后缺少表 ${t}`)
     }
     // 原有表一个都不能少
@@ -272,6 +281,12 @@ try {
   await sleep(2500)
   const memoirBody = await cdp.text()
   if (!memoirBody.includes('回忆录')) problems.push('升级后回忆录页打不开或没有入口')
+
+  // 互动内容页在升级后的老库上也能打开（T6 第三版）
+  await cdp.send('Page.navigate', { url: `${BASE}/#/game-content` })
+  await sleep(2500)
+  const gameContentBody = await cdp.text()
+  if (!gameContentBody.includes('互动内容')) problems.push('升级后互动内容页打不开或没有入口')
   if (body.includes('页面出错了') || body.includes('读取本机数据失败')) problems.push('升级后作者端出现错误页')
   await cdp.shot('01-after-v4.png')
 
@@ -285,7 +300,7 @@ try {
     for (const p of problems) console.log(`  · ${p}`)
     process.exitCode = 1
   } else {
-    console.log('✓ v3 → v4 增量升级安全：旧数据逐类保留，新表可读写，作者端正常打开。')
+    console.log('✓ v3 → v6 增量升级安全：旧数据逐类保留，新表可读写，作者端正常打开。')
   }
   console.log(`截图：${OUT}`)
 } finally {

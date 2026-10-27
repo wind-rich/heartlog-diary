@@ -32,6 +32,9 @@
       import { createPuzzleBoard, hintPuzzle, isPuzzleSolved, loadPuzzleRecord, savePuzzleRecord, swapPuzzlePieces } from '/src/viewer/game/puzzle.ts'
       import { buildGuessQuestions, distinctGuessPhotos, loadGuessRecord, saveGuessRecord } from '/src/viewer/game/photoGuess.ts'
       import { buildMemoryBoxQueue, relatedEntryForPhoto } from '/src/viewer/game/memoryBox.ts'
+      import { buildTimelinePool, buildTimelinePuzzle, gradeTimeline, loadTimelineRecord, moveTimelineItem, saveTimelineRecord } from '/src/viewer/game/timeline.ts'
+      import { buildQuizQuestions, loadQuizRecord, saveQuizRecord, validQuizItems } from '/src/viewer/game/quiz.ts'
+      import { allDateCards, DEFAULT_FILTERS, drawDateCombo, loadDateFavorites, saveDateFavorite } from '/src/viewer/game/dateDraw.ts'
 
       const out = document.getElementById('out')
       const checks = []
@@ -162,6 +165,55 @@
         check('盲盒：一轮不重复', new Set(box1.map((p) => p.id)).size === box1.length, String(box1.length))
         const entries = [{ id: 'entry_1', occurredAt: '2026-10-02T10:00:00.000+08:00', kind: 'daily', title: '第二张的记录', tags: [], photoIds: ['ph_2'], quick: false }]
         check('盲盒：可通过 entry.photoIds 反查关联', relatedEntryForPhoto(guessPool[1], entries)?.id === 'entry_1', 'entry_1')
+
+        /* 8) 时光排序 */
+        const timelineEntries = [
+          { id: 'te_1', occurredAt: '2026-10-01T08:00:00.000+08:00', kind: 'daily', title: '第一天', tags: [], photoIds: [], quick: false },
+          { id: 'te_2', occurredAt: '2026-10-02T09:00:00.000+08:00', kind: 'daily', title: '第二天', tags: [], photoIds: [], quick: false },
+          { id: 'te_3', occurredAt: '2026-10-02T18:00:00.000+08:00', kind: 'daily', title: '同日不入选', tags: [], photoIds: [], quick: false },
+          { id: 'te_4', occurredAt: '2026-10-04T10:00:00.000+08:00', kind: 'daily', title: '第四天', tags: [], photoIds: [], quick: false },
+          { id: 'te_5', occurredAt: 'bad-date', kind: 'daily', title: '坏日期', tags: [], photoIds: [], quick: false },
+        ]
+        const timelinePool = buildTimelinePool(timelineEntries)
+        check('时光排序：只用可信日期且同日去重', timelinePool.map((x) => x.entryId).join(',') === 'te_1,te_2,te_4', timelinePool.map((x) => x.entryId).join(','))
+        const tl1 = buildTimelinePuzzle(timelineEntries, 'pub_A', 't1', 'easy')
+        const tl2 = buildTimelinePuzzle(timelineEntries, 'pub_A', 't1', 'easy')
+        check('时光排序：同 seed 可复现且不是正解开局', JSON.stringify(tl1) === JSON.stringify(tl2) && tl1 !== null && tl1.items.some((item, i) => item.entryId !== tl1.answer[i].entryId), `${tl1?.items.length} 条`)
+        const moved = moveTimelineItem(['a', 'b', 'c'], 0, 1)
+        check('时光排序：上移/下移按钮逻辑', moved.join(',') === 'b,a,c', moved.join(','))
+        check('时光排序：逐位置判定', gradeTimeline(tl1.answer, tl1.answer.map((x) => x.entryId)).every(Boolean), 'all true')
+        localStorage.removeItem('heartlog.game.timeline.v1.pub_A.easy')
+        const tlRecord = saveTimelineRecord('pub_A', 'easy', { correct: 3, total: 3, ms: 12000 })
+        check('时光排序：全对成绩按难度隔离', tlRecord.clears === 1 && loadTimelineRecord('pub_A', 'easy')?.plays === 1, JSON.stringify(tlRecord))
+
+        /* 9) 五道题 */
+        const quizContent = [
+          { id: 'q1', kind: 'quiz', schemaVersion: 1, prompt: '第一题', options: [{ id: 'a', text: '对' }, { id: 'b', text: '错' }], correctOptionId: 'a', sourceEntryIds: ['entry_1'] },
+          { id: 'q2', kind: 'quiz', schemaVersion: 1, prompt: '第二题', options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }, { id: 'c', text: 'C' }], correctOptionId: 'c', sourceEntryIds: [] },
+          { id: 'q3', kind: 'quiz', schemaVersion: 1, prompt: '坏题：没有答案', options: [{ id: 'a', text: 'A' }], correctOptionId: 'missing', sourceEntryIds: [] },
+        ]
+        check('五道题：无效题目被过滤', validQuizItems(quizContent).length === 2, String(validQuizItems(quizContent).length))
+        const quiz1 = buildQuizQuestions(quizContent, 'pub_A', 'q-seed')
+        const quiz2 = buildQuizQuestions(quizContent, 'pub_A', 'q-seed')
+        check('五道题：同 seed 可复现', JSON.stringify(quiz1) === JSON.stringify(quiz2), `${quiz1.length} 题`)
+        check('五道题：答案 ID 不随选项洗牌变化', quiz1.every((q) => q.options.some((o) => o.id === q.correctOptionId)), quiz1.map((q) => q.correctOptionId).join(','))
+        localStorage.removeItem('heartlog.game.quiz.v1.pub_A.2')
+        const quizRecord = saveQuizRecord('pub_A', 2, { correct: 2, assists: 1 })
+        check('五道题：本机成绩按题量隔离', quizRecord.bestCorrect === 2 && loadQuizRecord('pub_A', 2)?.rounds === 1, JSON.stringify(quizRecord))
+
+        /* 10) 活动抽卡 */
+        const dateCards = allDateCards([{ id: 'dc_custom', kind: 'dateCard', schemaVersion: 1, category: 'surprise', text: '互写一张小纸条', tags: ['setting:any', 'budget:free', 'duration:short'] }])
+        check('活动抽卡：内置卡三类各至少 6 张', ['activity', 'place', 'surprise'].every((kind) => dateCards.filter((c) => c.category === kind).length >= 6), String(dateCards.length))
+        check('活动抽卡：自定义卡合并且同 ID 不重复', dateCards.some((c) => c.id === 'dc_custom') && new Set(dateCards.map((c) => c.id)).size === dateCards.length, 'custom merged')
+        const draw1 = drawDateCombo(dateCards, DEFAULT_FILTERS, {}, 'draw-seed')
+        const draw2 = drawDateCombo(dateCards, DEFAULT_FILTERS, {}, 'draw-seed')
+        check('活动抽卡：固定 seed 可复现', JSON.stringify(draw1.combo) === JSON.stringify(draw2.combo), Object.keys(draw1.combo).join(','))
+        check('活动抽卡：一次组合三类齐全', Boolean(draw1.combo.activity && draw1.combo.place && draw1.combo.surprise), Object.keys(draw1.combo).join(','))
+        const lockedDraw = drawDateCombo(dateCards, DEFAULT_FILTERS, { place: draw1.combo.place }, 'another-seed')
+        check('活动抽卡：锁定项不会被重抽', lockedDraw.combo.place?.id === draw1.combo.place.id, lockedDraw.combo.place?.id || 'none')
+        localStorage.removeItem('heartlog.game.dateDraw.v1.pub_A')
+        const favorites = saveDateFavorite('pub_A', { activity: draw1.combo.activity, place: draw1.combo.place, surprise: draw1.combo.surprise }, '2026-10-27T00:00:00.000Z')
+        check('活动抽卡：喜欢组合只存本机并可去重', favorites.length === 1 && loadDateFavorites('pub_A').length === 1, favorites[0]?.id || 'none')
 
         const failed = checks.filter((c) => !c.pass)
         window.__gameselftest = { done: true, total: checks.length, failed: failed.length, checks }

@@ -28,12 +28,14 @@ import { BundleExportPanel } from '../components/BundleExportPanel'
 import { SyncPanel } from '../components/SyncPanel'
 import { PublishPanel } from '../components/PublishPanel'
 import { useApp } from '../state/app'
+import { useAuthorReload } from '../viewer/author/AuthorReload'
 import { GAME_IDS, GAME_META } from '../viewer/game/config'
 import type { GameId } from '../viewer/types'
 
 export default function SettingsPage() {
   const nav = useNavigate()
   const { aiConfig, saveAIConfig, prefs, savePrefs, cloudUser } = useApp()
+  const reloadAuthor = useAuthorReload()
   const toast = useToast()
   const confirm = useConfirm()
 
@@ -136,12 +138,18 @@ export default function SettingsPage() {
   const gameSwitchChecked = (id: GameId) =>
     id === 'memory' ? prefs.games?.[id]?.enabled ?? prefs.gameEnabled !== false : prefs.games?.[id]?.enabled === true
 
-  const saveGameSwitch = (id: GameId, enabled: boolean) => {
-    savePrefs({
+  const saveGameSwitch = async (id: GameId, enabled: boolean) => {
+    await savePrefs({
       games: Object.fromEntries(
         GAME_IDS.map((gameId) => [gameId, { enabled: gameId === id ? enabled : gameSwitchChecked(gameId) }]),
       ) as NonNullable<typeof prefs.games>,
     })
+    await reloadAuthor?.()
+  }
+
+  const saveGameMaster = async (enabled: boolean) => {
+    await savePrefs({ gameEnabled: enabled })
+    await reloadAuthor?.()
   }
 
   return (
@@ -352,7 +360,7 @@ export default function SettingsPage() {
       >
         <Switch
           checked={prefs.gameEnabled !== false}
-          onChange={(v) => savePrefs({ gameEnabled: v })}
+          onChange={(v) => void saveGameMaster(v)}
           label="在展示页开放「回忆游乐园」"
           desc="总开关关闭时访客端不会出现互动入口，直接地址也不能进入。改动需要在「发布到展示端」后才会被访客看到。"
         />
@@ -362,7 +370,7 @@ export default function SettingsPage() {
               <Switch
                 key={id}
                 checked={gameSwitchChecked(id)}
-                onChange={(v) => saveGameSwitch(id, v)}
+                onChange={(v) => void saveGameSwitch(id, v)}
                 label={GAME_META[id].title}
                 desc={`${GAME_META[id].description} 成绩只存在访客自己的浏览器里，不会写回你的数据。`}
               />
@@ -370,6 +378,9 @@ export default function SettingsPage() {
             <p className="px-1 pb-1 text-[11.5px] leading-relaxed text-ink-400">
               新增玩法默认关闭；旧版快照没有子开关时仍只显示记忆配对。设置会随完整备份保存与恢复，普通多端同步不会同步这些偏好。
             </p>
+            <button type="button" onClick={() => nav('/game-content')} className="btn-ghost inline-flex min-h-11 items-center px-3 text-[12px]">
+              管理五道题与抽卡内容
+            </button>
           </div>
         )}
       </SectionCard>
@@ -586,6 +597,7 @@ function CountCell({ name }: { name: string }) {
     photos: '照片',
     insights: '画像',
     summaries: '报告',
+    gameContent: '玩法内容',
     meta: '设置项',
   }
   return (

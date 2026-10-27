@@ -335,6 +335,14 @@
         __setPublishDbForTest(strict.db)
         __skipPublishSessionForTest(true)
 
+        // T6 第三版：题库与自定义抽卡内容也应进入公开快照白名单
+        const sourceEntry = (await db.entries.toArray())[0]
+        const sourcePhoto = (await db.photos.toArray())[0]
+        await db.gameContent.bulkPut([
+          { id: 'gc_quiz_1', personId: 'p_test', kind: 'quiz', schemaVersion: 1, enabled: true, prompt: '他喜欢哪种天气？', options: [{ id: 'a', text: '晴天' }, { id: 'b', text: '雨天' }], correctOptionId: 'a', explanation: '测试说明', photoId: sourcePhoto.id, sourceEntryIds: [sourceEntry.id], createdAt: nowISO(), updatedAt: nowISO() },
+          { id: 'gc_card_1', personId: 'p_test', kind: 'dateCard', schemaVersion: 1, enabled: true, category: 'surprise', text: '互写一张小纸条', tags: ['setting:any', 'budget:free', 'duration:short'], createdAt: nowISO(), updatedAt: nowISO() },
+        ])
+
         // 复用前面造的数据：1 人物 / 1 记录（e_gone 已删） / 2 张照片
         const r1 = await publishToCloud()
         check('发布：写入 4 格媒体（2 张 × 缩略图/网页图）', strict.media.size === 4, `media=${strict.media.size}`)
@@ -348,6 +356,18 @@
         const payloadPhotos = snapRow.payload.photos || []
         check('发布：payload 里的照片不带媒体地址', payloadPhotos.every((p) => p.media.thumb.url === '' && p.media.full.url === ''))
         check('发布：payload 里照片数与统计一致', payloadPhotos.length === 2, `photos=${payloadPhotos.length}`)
+        const gameItems = snapRow.payload.gameContent || []
+        check('发布：gameContent 白名单进入快照', gameItems.length === 2 && gameItems.some((x) => x.kind === 'quiz') && gameItems.some((x) => x.kind === 'dateCard'), JSON.stringify(gameItems.map((x) => x.kind)))
+        check('发布：gameContent 不透传内部字段', gameItems.every((x) => x.personId === undefined && x.createdAt === undefined && x.updatedAt === undefined && x.enabled === undefined), '仅公开字段')
+        check('发布：gameContent 计数与内容一致', snapRow.payload.manifest.counts.gameContent === 2, `counts=${snapRow.payload.manifest.counts.gameContent}`)
+
+        let invalidBlocked = null
+        await db.gameContent.put({ id: 'gc_bad', personId: 'p_test', kind: 'quiz', schemaVersion: 1, enabled: true, prompt: '', options: [], correctOptionId: 'missing', sourceEntryIds: ['missing'], createdAt: nowISO(), updatedAt: nowISO() })
+        try { await publishToCloud() } catch (e) { invalidBlocked = e }
+        check('发布：无效互动内容会中止发布', Boolean(invalidBlocked) && String(invalidBlocked?.message || '').includes('互动内容'), String(invalidBlocked?.message || '').slice(0, 80))
+        await db.gameContent.delete('gc_bad')
+        // 这条只是「发布校验」探针，不是同步删除场景；清掉墓碑避免污染后续同步断言
+        await db.tombstones.delete('gameContent:gc_bad')
 
         // 再发一次：内容没变，应当全部跳过、不再上传
         const before = strict.calls.media
@@ -373,12 +393,15 @@
         const someEntry = (await db.entries.toArray())[0]
         const originalTitle = someEntry.title
         await db.entries.update(someEntry.id, { title: '改过的标题', updatedAt: nowISO() })
+        const gameRow = await db.gameContent.get('gc_quiz_1')
+        await db.gameContent.put({ ...gameRow, prompt: '他喜欢哪种天气？（改过）', updatedAt: nowISO() })
         const p1 = await previewPublish()
         check(
           '预览：改动一条记录 → 记录「改 1」',
           p1.diff.entries?.changed === 1 && p1.lines.some((l) => l.startsWith('记录')),
           JSON.stringify(p1.diff.entries),
         )
+        check('预览：玩法内容进入差异预览', p1.diff.gameContent?.changed === 1 && p1.lines.some((l) => l.startsWith('玩法内容')), JSON.stringify(p1.diff.gameContent))
 
         await publishToCloud()
         check('再发布：版本历史累加一条', strict.history.size === history0 + 1, `history=${strict.history.size}`)
@@ -729,10 +752,14 @@
           (await db.entries.get('e_keep'))?.title === '手机改过的新标题',
           `local.title=${(await db.entries.get('e_keep'))?.title} remoteNewer=${remoteNewer} pulled=${r7.pulled} keptLocal=${r7.keptLocal}`,
         )
+        const latestRemoteAt = [...remote.values()].reduce((max, row) => {
+          const t = Date.parse(row.updated_at || '')
+          return Number.isFinite(t) && t > max ? t : max
+        }, 0)
         check(
           '拉取后游标前进到云端最新行',
-          ((await db.meta.get('cloudSyncCursor'))?.value || '') === remoteNewer,
-          `cursor=${(await db.meta.get('cloudSyncCursor'))?.value}`,
+          Date.parse((await db.meta.get('cloudSyncCursor'))?.value || '') === latestRemoteAt,
+          `cursor=${(await db.meta.get('cloudSyncCursor'))?.value} latest=${new Date(latestRemoteAt).toISOString()}`,
         )
         check('该轮同步不再重复上传这条', r7.pushed >= 0, `pushed=${r7.pushed}`)
 
@@ -1101,7 +1128,19 @@
           `entry.occurredAt=${importedData.entries[0]?.occurredAt}`,
         )
 
-        // 12) 收尾
+        // 12) T6 第三版：互动内容进入主同步，删除也走墓碑上行
+        await db.gameContent.put({
+          id: 'gc_sync_probe', personId: 'p_snap', kind: 'dateCard', schemaVersion: 1, enabled: true,
+          category: 'surprise', text: '同步测试卡片', tags: ['setting:any'], createdAt: nowISO(), updatedAt: nowISO(),
+        })
+        await runSync()
+        check('互动内容同步上行', remote.get('gameContent:gc_sync_probe')?.payload?.text === '同步测试卡片', JSON.stringify(remote.get('gameContent:gc_sync_probe')?.payload || {}))
+        await db.gameContent.delete('gc_sync_probe')
+        await sleep(80)
+        await runSync()
+        check('互动内容删除同步为墓碑行', remote.get('gameContent:gc_sync_probe')?.deleted === true, JSON.stringify(remote.get('gameContent:gc_sync_probe')?.deleted))
+
+        // 13) 收尾
         __setSyncCloudForTest(null)
         __setSyncSessionForTest(undefined)
         await wipeAllData()

@@ -291,6 +291,40 @@ export interface AIConfig {
   temperature?: number
 }
 
+/** T6 第三版：互动玩法的作者内容。发布时只映射公开白名单字段。 */
+export type GameContentKind = 'quiz' | 'dateCard' | 'treasure'
+
+export interface GameContentOption {
+  id: string
+  text: string
+}
+
+export interface GameContent {
+  id: string
+  personId: string
+  kind: GameContentKind
+  schemaVersion: number
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  /** quiz：题干 */
+  prompt?: string
+  /** quiz：2～4 个选项，correctOptionId 必须指向稳定 id */
+  options?: GameContentOption[]
+  correctOptionId?: string
+  explanation?: string
+  photoId?: string
+  sourceEntryIds?: string[]
+  /** dateCard：activity=活动，place=地点类型，surprise=小彩蛋 */
+  category?: 'activity' | 'place' | 'surprise'
+  text?: string
+  tags?: string[]
+  /** treasure：第四版预留，第三版不提供编辑器 */
+  title?: string
+  steps?: unknown[]
+  completionMessage?: string
+}
+
 /** 应用偏好设置 */
 export interface AppPrefs {
   /** 上传图片时是否默认保留原图 */

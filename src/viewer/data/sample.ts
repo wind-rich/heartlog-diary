@@ -3,6 +3,7 @@ import type {
   PublicAnniversary,
   PublicDailyStatus,
   PublicEntry,
+  PublicGameContent,
   PublicGift,
   PublicHealth,
   PublicInsight,
@@ -485,6 +486,58 @@ function buildDemo(): PublishedSnapshot {
     tags: ['温柔', '慢热', '爱吃甜'],
   }
 
+  const GAME_CONTENT: PublicGameContent[] = [
+    {
+      id: 'gq_01', kind: 'quiz', schemaVersion: 1, prompt: '他更容易被哪一种安慰打动？',
+      options: [
+        { id: 'a', text: '认真听完再抱一下' },
+        { id: 'b', text: '立刻讲道理分析' },
+        { id: 'c', text: '假装什么都没发生' },
+      ],
+      correctOptionId: 'a', explanation: '先接住情绪，再一起想办法。', sourceEntryIds: ['e_02'],
+    },
+    {
+      id: 'gq_02', kind: 'quiz', schemaVersion: 1, prompt: '下面哪一种是他的“续命水”？',
+      options: [
+        { id: 'a', text: '冰美式' },
+        { id: 'b', text: '热可可' },
+        { id: 'c', text: '气泡水' },
+        { id: 'd', text: '白开水' },
+      ],
+      correctOptionId: 'b', explanation: '天气冷的时候尤其明显。', sourceEntryIds: ['e_06'],
+    },
+    {
+      id: 'gq_03', kind: 'quiz', schemaVersion: 1, prompt: '他拍照时最常说什么？',
+      options: [
+        { id: 'a', text: '这张像电影' },
+        { id: 'b', text: '别动，光很好' },
+        { id: 'c', text: '随便拍一张就行' },
+      ],
+      correctOptionId: 'b', sourceEntryIds: ['e_12'],
+    },
+    {
+      id: 'gq_04', kind: 'quiz', schemaVersion: 1, prompt: '他做饭的拿手菜是哪一道？',
+      options: [
+        { id: 'a', text: '番茄牛腩' },
+        { id: 'b', text: '清蒸鱼' },
+        { id: 'c', text: '咖喱饭' },
+      ],
+      correctOptionId: 'a', explanation: '第一次做就已经很像样。', sourceEntryIds: ['e_05'],
+    },
+    {
+      id: 'gq_05', kind: 'quiz', schemaVersion: 1, prompt: '下雪天他最容易先做什么？',
+      options: [
+        { id: 'a', text: '催我多穿一点' },
+        { id: 'b', text: '先发朋友圈' },
+        { id: 'c', text: '立刻出门跑步' },
+      ],
+      correctOptionId: 'a', sourceEntryIds: ['e_16'],
+    },
+    { id: 'gd_01', kind: 'dateCard', schemaVersion: 1, category: 'activity', text: '一起复刻第一次约会点过的东西', tags: ['setting:indoor', 'budget:low', 'duration:short'] },
+    { id: 'gd_02', kind: 'dateCard', schemaVersion: 1, category: 'place', text: '找一家安静的甜品店', tags: ['setting:indoor', 'budget:low', 'duration:short'] },
+    { id: 'gd_03', kind: 'dateCard', schemaVersion: 1, category: 'surprise', text: '各自写下一句今天的感谢，交换着读', tags: ['setting:any', 'budget:free', 'duration:short'] },
+  ]
+
   return {
     manifest: {
       formatVersion: VIEWER_FORMAT_VERSION,
@@ -502,6 +555,7 @@ function buildDemo(): PublishedSnapshot {
         insights: INSIGHTS.length,
         summaries: SUMMARIES.length,
         anniversaries: ANNIVERSARIES.length,
+        gameContent: GAME_CONTENT.length,
       },
       contentHash: 'sha256:demo0000000000',
     },
@@ -515,6 +569,9 @@ function buildDemo(): PublishedSnapshot {
         puzzle: { enabled: true },
         photoGuess: { enabled: true },
         memoryBox: { enabled: true },
+        timeline: { enabled: true },
+        quiz: { enabled: true },
+        dateDraw: { enabled: true },
       },
       music: { title: '第 7 部电影的片尾曲', artist: '示例曲目', src: undefined },
     },
@@ -529,6 +586,7 @@ function buildDemo(): PublishedSnapshot {
     insights: INSIGHTS,
     summaries: SUMMARIES,
     statuses: STATUSES,
+    gameContent: GAME_CONTENT,
   }
 }
 
@@ -558,6 +616,7 @@ function buildEmpty(): PublishedSnapshot {
     insights: [],
     summaries: [],
     statuses: [],
+    gameContent: [],
   }
 }
 
