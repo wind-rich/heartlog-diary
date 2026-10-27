@@ -5,7 +5,8 @@
  * 之前遇到过「本地构建有 chunk、线上 403 或没镜像过去」的情况，
  * 只看本地 dist 目录无法发现。
  *
- * 用法：node verify/verify-live-tasks.mjs
+ * 用法：HL_LIVE_URL="https://<站点域名>/?sharecode=<分享码>" node verify/verify-live-tasks.mjs
+ * 分享码是访客页访问凭证，不写进仓库，只从环境变量读。
  */
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
@@ -17,8 +18,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 const OUT = join(ROOT, 'verify/_artifacts/live-tasks')
 const PORT = 9429
-const LIVE = process.env.HL_LIVE_URL || 'https://heartlog-viewer.app.workbuddy.host/?sharecode=PXS5TIGLA6'
-const AUTHOR = LIVE.replace('/?sharecode=', '/author.html?sharecode=').replace(/\?.*$/, '') + '?sharecode=' + (LIVE.match(/sharecode=([^&]+)/) || [])[1]
+const LIVE = process.env.HL_LIVE_URL || ''
+const sharecode = (LIVE.match(/sharecode=([^&]+)/) || [])[1]
+const AUTHOR = `${LIVE.replace(/\/?\?.*$/, '')}/author.html${sharecode ? `?sharecode=${sharecode}` : ''}`
+if (!LIVE) {
+  console.error('✗ 缺少 HL_LIVE_URL。分享码不入库，请临时传入：')
+  console.error('  HL_LIVE_URL="https://<站点域名>/?sharecode=<分享码>" node verify/verify-live-tasks.mjs')
+  process.exit(1)
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 mkdirSync(OUT, { recursive: true })
 
