@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
-const SITE = join(ROOT, 'dist-viewer')
+const SITE = process.env.HL_VIEWER_DIR ? resolve(ROOT, process.env.HL_VIEWER_DIR) : join(ROOT, 'dist-viewer')
 const OUT = resolve(__dirname, '_artifacts/viewer')
 const HTTP_PORT = Number(process.env.HL_STATIC_PORT || 5290)
 const LIVE = process.env.HL_LIVE_URL || ''
@@ -28,7 +28,7 @@ const EXPECT = process.env.HL_EXPECT === 'real' ? 'real' : 'sample'
 const CDP_PORT = 9413
 
 if (!LIVE && !existsSync(join(SITE, 'index.html'))) {
-  console.error('✗ 找不到 dist-viewer/index.html，请先执行 npm run build:viewer')
+  console.error(`✗ 找不到 ${process.env.HL_VIEWER_DIR || 'dist-viewer'}/index.html，请先准备候选产物`)
   process.exit(1)
 }
 mkdirSync(OUT, { recursive: true })
@@ -137,12 +137,14 @@ try {
     await new Promise((res) => server.listen(HTTP_PORT, '127.0.0.1', res))
     serverStarted = true
     BASE = `http://127.0.0.1:${HTTP_PORT}`
-    console.log('模式：校验本地 dist-viewer/')
+    console.log(`模式：校验本地 ${process.env.HL_VIEWER_DIR || 'dist-viewer/'}`)
   }
 
   // 统一 URL：ROOT 保留 ?sharecode= 之类的查询串，assetBase 只保留目录部分
   const parsed = new URL(BASE)
   const ROOT = BASE.replace(/\/+$/, '')
+  // 合成构建默认仍会先尝试云端；校验示例产物时必须显式固定来源。
+  const HOME = EXPECT === 'sample' && !LIVE ? `${ROOT}/?source=sample` : ROOT
   const assetBase = `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}/`
 
   // 1. 入口与静态资源可达性（先不依赖浏览器）
@@ -205,7 +207,7 @@ try {
   await cdp.send('Network.enable')
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
 
-  await cdp.send('Page.navigate', { url: ROOT })
+  await cdp.send('Page.navigate', { url: HOME })
   await sleep(LIVE ? 3000 : 2200)
 
   const home = await cdp.evaluate(`(() => {
@@ -253,12 +255,13 @@ try {
     ['#/album', '照片'],
     ['#/archive?tab=portrait', '档案'],
   ]) {
-    await cdp.send('Page.navigate', { url: `${ROOT}${route}` })
+    await cdp.send('Page.navigate', { url: `${HOME}${route}` })
     await sleep(1500)
     const t = await cdp.evaluate('document.body.innerText.slice(0, 200)')
     if (!t || !t.includes(expect)) problems.push(`路由 ${route} 未渲染「${expect}」`)
     if (route.includes('album')) {
-      await sleep(1500)
+      await cdp.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+      await sleep(1200)
       const imgs = await cdp.evaluate(`(() => {
         const all = [...document.images];
         return { total: all.length, loaded: all.filter(i => i.complete && i.naturalWidth > 0).length, broken: all.filter(i => i.complete && i.naturalWidth === 0).length };
@@ -271,7 +274,7 @@ try {
 
   // 4. 320 窄屏
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 2, mobile: true })
-  await cdp.send('Page.navigate', { url: ROOT })
+  await cdp.send('Page.navigate', { url: HOME })
   await sleep(1800)
   const narrow = await cdp.evaluate(`(() => {
     const de = document.documentElement;

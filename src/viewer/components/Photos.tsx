@@ -82,6 +82,13 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
   // 云端模式没带图地址，按需取一次大图；静态模式直接返回原地址
   const fullUrl = useFullPhotoUrl(photo)
 
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      if (trigger?.isConnected) trigger.focus()
+    }
+  }, [])
+
 
 
   const go = useCallback(
@@ -111,7 +118,7 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
 
   return (
     <div
-      className="v-fade fixed inset-0 z-[80] flex flex-col bg-[#140e14]/95 backdrop-blur-sm"
+      className="v-lightbox v-fade fixed inset-0 z-[80] flex flex-col backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="照片大图"

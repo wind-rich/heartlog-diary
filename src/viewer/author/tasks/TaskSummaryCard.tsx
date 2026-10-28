@@ -141,7 +141,7 @@ export default function TaskSummaryCard() {
     return (
       <Link
         to="/tasks"
-        className="flex items-center gap-2 rounded-2xl border border-dashed border-cream-300 bg-white/70 px-4 py-3 text-[12.5px] text-ink-500 transition hover:bg-cream-50"
+        className="v-task-home-empty"
       >
         <CalendarCheck size={14} className="text-rose-soft" />
         <span className="flex-1">还没有「为他记着」的事项，可以记下要提醒他的事</span>
@@ -156,9 +156,9 @@ export default function TaskSummaryCard() {
   const focus = rows.filter((r) => r.bucket === 'overdue' || r.bucket === 'today').slice(0, 4)
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+    <section className="v-task-home-card">
       {/* 头部 */}
-      <div className="flex items-center gap-2 border-b border-cream-200 bg-[#FFF9F3] px-4 py-2.5">
+      <div className="v-task-home-head">
         <CalendarCheck size={14} className="text-rose-deep" />
         <span className="text-[13px] font-semibold text-ink-900">为他记着</span>
         {alerts.length > 0 && (
@@ -277,10 +277,10 @@ export default function TaskSummaryCard() {
       )}
 
       {/* 底部 */}
-      <div className="flex items-center gap-2 border-t border-cream-200 bg-[#FFFCF8] px-4 py-2">
+      <div className="v-task-home-foot">
         <Link
           to="/tasks"
-          className="inline-flex items-center gap-1 rounded-full bg-rose-deep px-2.5 py-1 text-[11px] font-medium text-white"
+          className="v-task-home-primary"
         >
           <Plus size={10} /> 记一件事
         </Link>

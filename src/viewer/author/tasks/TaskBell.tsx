@@ -139,7 +139,7 @@ export default function TaskBell() {
           void load()
         }}
         aria-label={`站内提醒${unread ? `，${unread} 条未读` : ''}`}
-        className="relative flex h-9 w-9 items-center justify-center rounded-full text-ink-500 transition hover:bg-cream-100"
+        className="v-task-bell relative flex h-9 w-9 items-center justify-center rounded-full transition"
       >
         {unread ? <BellRing size={18} className="text-rose-deep" /> : <Bell size={18} />}
         {unread > 0 && (
@@ -151,8 +151,8 @@ export default function TaskBell() {
 
       {open && (
         <div className="fixed inset-0 z-[75] flex items-start justify-center px-3 pt-16 sm:items-center sm:pt-0">
-          <div className="absolute inset-0 bg-[#4A3B31]/35 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <div className="relative max-h-[76vh] w-full max-w-[440px] overflow-hidden rounded-2xl border border-cream-200 bg-[#FFFCF8] shadow-pop">
+          <div className="absolute inset-0 bg-[#151827]/45 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
+          <div className="v-task-bell-pop relative max-h-[76vh] w-full max-w-[440px] overflow-hidden rounded-2xl shadow-pop">
             <div className="flex items-center gap-2 border-b border-cream-200 px-4 py-3">
               <BellRing size={15} className="text-rose-deep" />
               <div className="flex-1 text-[14px] font-semibold text-ink-900">站内提醒</div>

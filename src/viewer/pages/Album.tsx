@@ -8,7 +8,32 @@ import { photosDesc } from '../lib/data'
 import { PhotoTile, Lightbox } from '../components/Photos'
 import { TreasureTargetAction } from '../components/TreasureTargetAction'
 import { EmptyState } from '../components/bits'
+import type { PublicPhoto } from '../types'
 import { parseAny } from '../../lib/date'
+
+interface PhotoGroup {
+  key: string
+  label: string
+  items: { photo: PublicPhoto; index: number }[]
+}
+
+function groupPhotos(list: PublicPhoto[]): PhotoGroup[] {
+  const groups: PhotoGroup[] = []
+  const map = new Map<string, PhotoGroup>()
+  list.forEach((photo, index) => {
+    const date = photo.takenAt ? parseAny(photo.takenAt) : null
+    const valid = date && !Number.isNaN(date.getTime())
+    const key = valid ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` : 'unknown'
+    let group = map.get(key)
+    if (!group) {
+      group = { key, label: valid ? `${date.getFullYear()} 年 ${date.getMonth() + 1} 月` : '日期未知', items: [] }
+      map.set(key, group)
+      groups.push(group)
+    }
+    group.items.push({ photo, index })
+  })
+  return groups
+}
 
 export default function Album() {
   const s = useSnapshot()
@@ -24,16 +49,24 @@ export default function Album() {
 
   const years = useMemo(() => {
     const set = new Set<number>()
-    for (const p of all) {
-      if (p.takenAt) set.add(parseAny(p.takenAt).getFullYear())
+    for (const photo of all) {
+      if (!photo.takenAt) continue
+      const date = parseAny(photo.takenAt)
+      if (!Number.isNaN(date.getTime())) set.add(date.getFullYear())
     }
     return [...set].sort((a, b) => b - a)
   }, [all])
 
   const list = useMemo(() => {
     if (year === 'all') return all
-    return all.filter((p) => p.takenAt && parseAny(p.takenAt).getFullYear() === year)
+    return all.filter((photo) => {
+      if (!photo.takenAt) return false
+      const date = parseAny(photo.takenAt)
+      return !Number.isNaN(date.getTime()) && date.getFullYear() === year
+    })
   }, [all, year])
+
+  const groups = useMemo(() => groupPhotos(list), [list])
 
   useEffect(() => {
     const photoId = params.get('photo')
@@ -47,13 +80,12 @@ export default function Album() {
   }, [all, params])
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-start justify-between gap-3 px-1">
+    <div className="v-album-page mx-auto max-w-[1120px]">
+      <header className="v-page-header">
         <div>
-          <h1 className="text-[19px] font-semibold text-ink-900">相册</h1>
-          <p className="mt-1 text-[11.5px] text-ink-500">
-            共 {all.length} 张照片 · 点击查看大图，左右滑动切换
-          </p>
+          <div className="v-eyebrow">A COLLECTION OF LIGHT</div>
+          <h1>光影收藏</h1>
+          <p>共 {all.length} 张照片 · 按拍摄月份整理，点开可完整查看并左右切换。</p>
         </div>
         {editable && reload && (
           <Suspense fallback={null}>
@@ -63,61 +95,54 @@ export default function Album() {
       </header>
 
       {years.length > 1 && (
-        <div className="v-scroll-x -mx-1 flex gap-1.5 overflow-x-auto px-1">
-          <button
-            type="button"
-            onClick={() => setYear('all')}
-            className={
-              year === 'all'
-                ? 'shrink-0 rounded-full border border-rose-soft bg-rose-soft/15 px-3 py-1 text-[11.5px] font-medium text-rose-deep'
-                : 'shrink-0 rounded-full border border-cream-300 bg-white px-3 py-1 text-[11.5px] text-ink-500'
-            }
-          >
-            全部
-          </button>
-          {years.map((y) => (
-            <button
-              key={y}
-              type="button"
-              onClick={() => setYear(y)}
-              className={
-                year === y
-                  ? 'shrink-0 rounded-full border border-rose-soft bg-rose-soft/15 px-3 py-1 text-[11.5px] font-medium text-rose-deep'
-                  : 'shrink-0 rounded-full border border-cream-300 bg-white px-3 py-1 text-[11.5px] text-ink-500'
-              }
-            >
-              {y} 年
+        <div className="v-filter-row v-scroll-x mt-1" role="group" aria-label="按年份筛选照片">
+          <button type="button" onClick={() => setYear('all')} aria-pressed={year === 'all'} className={year === 'all' ? 'v-filter-chip active' : 'v-filter-chip'}>全部</button>
+          {years.map((value) => (
+            <button key={value} type="button" onClick={() => setYear(value)} aria-pressed={year === value} className={year === value ? 'v-filter-chip active' : 'v-filter-chip'}>
+              {value} 年
             </button>
           ))}
         </div>
       )}
 
       {list.length === 0 ? (
-        <EmptyState
-          icon={<Images size={22} />}
-          title={all.length ? '这一年还没有照片' : '还没有已发布的照片'}
-          desc={all.length ? '换一个年份看看。' : '作者发布照片之后，这里会按拍摄时间排列。'}
-        />
+        <div className="mt-5">
+          <EmptyState
+            icon={<Images size={22} />}
+            title={all.length ? '这一年还没有照片' : '还没有已发布的照片'}
+            desc={all.length ? '换一个年份看看。' : '作者发布照片之后，这里会按拍摄时间排列。'}
+          />
+        </div>
       ) : (
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 lg:grid-cols-5">
-          {list.map((p, i) => (
-            <div key={p.id} className="relative">
-              <PhotoTile photo={p} eager={i < 6} onClick={() => setIndex(i)} className="aspect-[3/4]" />
-              {editable && reload && (
-                <div className="absolute right-1 top-1 z-10">
-                  <Suspense fallback={null}>
-                    <DeletePhotoButton
-                      photoId={p.id}
-                      compact
-                      onDeleted={() => {
-                        if (index !== null && index >= list.length - 1) setIndex(null)
-                        void reload()
-                      }}
-                    />
-                  </Suspense>
-                </div>
-              )}
-            </div>
+        <div className="v-album-groups">
+          {groups.map((group) => (
+            <section key={group.key} className="v-album-month">
+              <div className="v-album-month-head">
+                <h2>{group.label}</h2>
+                <span>{group.items.length} 张</span>
+              </div>
+              <div className={`v-album-grid ${group.items.length >= 4 ? 'many' : ''}`}>
+                {group.items.map(({ photo, index: photoIndex }) => (
+                  <div key={photo.id} className="v-album-tile-wrap">
+                    <PhotoTile photo={photo} eager={photoIndex < 8} onClick={() => setIndex(photoIndex)} className="v-album-tile" />
+                    {editable && reload && (
+                      <div className="absolute right-1.5 top-1.5 z-10">
+                        <Suspense fallback={null}>
+                          <DeletePhotoButton
+                            photoId={photo.id}
+                            compact
+                            onDeleted={() => {
+                              if (index !== null && index >= list.length - 1) setIndex(null)
+                              void reload()
+                            }}
+                          />
+                        </Suspense>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

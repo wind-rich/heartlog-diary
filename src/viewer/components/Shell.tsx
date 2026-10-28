@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { BookHeart, BookMarked, Images, Home, UserRound, Heart, Puzzle, Settings as SettingsIcon, CalendarCheck } from 'lucide-react'
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
 import { hasEnabledGames } from '../game/config'
 import { SampleBadge } from './bits'
@@ -24,9 +24,7 @@ const NAV: NavItem[] = [
  */
 function navWithGame(gameOn: boolean): NavItem[] {
   if (!gameOn) return NAV
-  const out = [...NAV]
-  out.splice(3, 0, { to: '/game', label: '互动', icon: Puzzle })
-  return out
+  return [...NAV, { to: '/game', label: '互动', icon: Puzzle }]
 }
 
 /**
@@ -93,6 +91,11 @@ export function Shell({
   const loc = useLocation()
   const counts = snapshotCounts(s)
 
+  // 页面切换先回到顶部；故事列表在挂载后会恢复自己的滚动位置。
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [loc.pathname])
+
   const switchScene = (next: string) => {
     const url = new URL(window.location.href)
     url.searchParams.set('scene', next)
@@ -122,11 +125,11 @@ export function Shell({
         </div>
       )}
 
-      <header className="sticky top-0 z-40 border-b border-cream-200 bg-[#FFFCF8]/90 backdrop-blur-md">
+      <header className="v-shell-header sticky top-0 z-40 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[1120px] items-center gap-3 px-4">
           <NavLink to="/" className="flex min-w-0 items-center gap-2">
-            <Heart size={17} className="shrink-0 text-rose-deep" fill="currentColor" />
-            <span className="truncate text-[15px] font-semibold text-ink-900">{name}</span>
+            <Heart size={16} className="shrink-0 text-[#8a759e]" fill="currentColor" />
+            <span className="v-brand-name truncate text-[16px] text-[#292635]">{name}</span>
             {mode === 'preview' ? (
               <span className="inline-flex shrink-0 items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10.5px] font-medium text-[#8A5A2B]">
                 预览
@@ -173,12 +176,7 @@ export function Shell({
                 key={n.to}
                 to={n.to}
                 end={n.end}
-                className={({ isActive }) =>
-                  clsx(
-                    'rounded-full px-3 py-1.5 text-[13px] transition',
-                    isActive ? 'bg-rose-soft/15 font-medium text-rose-deep' : 'text-ink-500 hover:bg-cream-100',
-                  )
-                }
+                className={({ isActive }) => clsx('v-top-nav-link', isActive && 'active')}
               >
                 {n.label}
               </NavLink>
@@ -187,7 +185,7 @@ export function Shell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1120px] flex-1 px-4 pb-[calc(84px+env(safe-area-inset-bottom,0px))] pt-4 md:pb-16">
+      <main className="v-shell-main mx-auto w-full max-w-[1200px] flex-1 px-4 pb-[calc(84px+env(safe-area-inset-bottom,0px))] pt-4 sm:px-6 md:pb-16 lg:px-10">
         <Outlet />
       </main>
 
@@ -251,13 +249,13 @@ export function Shell({
         </div>
       </footer>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-cream-200 bg-[#FFFCF8]/95 backdrop-blur-md md:hidden">
-        {/* 列数按实际入口数算：加了小游戏后写死 grid-cols-4/6 会换行错位 */}
+      <nav className="v-bottom-nav fixed bottom-0 left-0 right-0 z-40 backdrop-blur-md md:hidden" aria-label="手机主导航">
+        {/* 作者七项内容入口全部直接可见；设置仍保留在右上角，避免窄屏挤成第八项。 */}
         <div
           className="grid"
           style={{
             paddingBottom: 'var(--safe-bottom)',
-            gridTemplateColumns: `repeat(${(editable ? allNav.length + 1 : allNav.length) || 4}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${allNav.length || 4}, minmax(0, 1fr))`,
           }}
         >
           {allNav.map((n) => (
@@ -265,33 +263,16 @@ export function Shell({
               key={n.to}
               to={n.to}
               end={n.end}
-              className={({ isActive }) =>
-                clsx('flex min-h-11 flex-col items-center justify-center gap-0.5 py-2.5 transition', isActive ? 'text-rose-deep' : 'text-ink-500')
-              }
+              className={({ isActive }) => clsx('v-bottom-nav-link', isActive && 'active')}
             >
               {({ isActive }) => (
                 <>
-                  <n.icon size={20} strokeWidth={isActive ? 2.1 : 1.8} />
-                  <span className="text-[10.5px]">{n.label}</span>
+                  <n.icon size={19} strokeWidth={isActive ? 2.1 : 1.7} />
+                  <span>{n.label}</span>
                 </>
               )}
             </NavLink>
           ))}
-            {editable && (
-              <NavLink
-                to="/settings"
-                className={({ isActive }) =>
-                  clsx('flex min-h-11 flex-col items-center justify-center gap-0.5 py-2.5 transition', isActive ? 'text-rose-deep' : 'text-ink-500')
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <SettingsIcon size={20} strokeWidth={isActive ? 2.1 : 1.8} />
-                    <span className="text-[10.5px]">设置</span>
-                  </>
-                )}
-              </NavLink>
-            )}
         </div>
       </nav>
     </div>

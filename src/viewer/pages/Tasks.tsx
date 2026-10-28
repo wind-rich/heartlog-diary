@@ -315,20 +315,23 @@ export default function Tasks() {
   }
 
   return (
-    <div className="mx-auto max-w-[820px] space-y-4">
-      <header className="flex items-start justify-between gap-3 px-1">
+    <div className="v-tasks-page mx-auto max-w-[920px]">
+      <header className="v-page-header">
         <div className="min-w-0">
-          <h1 className="text-[19px] font-semibold text-ink-900">为他记着</h1>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-ink-500">
-            今天 {summary.today} 件
-            {summary.overdue > 0 && <span className="text-[#9B3B2E]">，逾期 {summary.overdue} 件</span>}
-            ，共 {summary.open} 件待办。这些内容只存在你自己的设备与私有云端，不会出现在公网页。
-          </p>
+          <div className="v-eyebrow">LITTLE THINGS, WELL REMEMBERED</div>
+          <h1>为他记着</h1>
+          <p>把关心放进日常。这些内容只存在你的设备与私有云端，不会出现在公网页。</p>
         </div>
-        <button className="btn-primary shrink-0 px-3 py-1.5 text-[13px]" onClick={() => setEditing({})}>
-          <Plus size={14} /> 新增
+        <button className="btn-primary inline-flex min-h-11 shrink-0 items-center gap-1.5 px-4 text-[13px]" onClick={() => setEditing({})}>
+          <Plus size={15} /> 记一件事
         </button>
       </header>
+
+      <div className="v-task-summary" aria-label="待办概览">
+        <div><strong>{summary.open}</strong><span>未完成</span></div>
+        <div><strong>{summary.today}</strong><span>今天</span></div>
+        <div className={summary.overdue > 0 ? 'alert' : ''}><strong>{summary.overdue}</strong><span>已逾期</span></div>
+      </div>
 
       {/* 状态条：同步 / 通知 分别说明，不合并成一句「已启用」 */}
       <StateBar
@@ -342,27 +345,23 @@ export default function Tasks() {
       />
 
       {/* 分组 */}
-      <div className="v-scroll-x -mx-1 flex gap-1.5 overflow-x-auto px-1">
+      <div className="v-filter-row v-scroll-x" role="group" aria-label="按状态筛选事项">
         {FILTERS.map((f) => (
           <button
             key={f.key}
             type="button"
             onClick={() => setFilter(f.key)}
-            className={clsx(
-              'shrink-0 rounded-full px-3 py-1.5 text-[12.5px] transition',
-              filter === f.key
-                ? 'bg-rose-deep font-medium text-white'
-                : 'border border-cream-300 bg-white text-ink-500 hover:bg-cream-100',
-            )}
+            aria-pressed={filter === f.key}
+            className={filter === f.key ? 'v-filter-chip active' : 'v-filter-chip'}
           >
             {f.label}
-            {counts[f.key] > 0 && <span className="ml-1 tabular-nums opacity-70">{counts[f.key]}</span>}
+            {counts[f.key] > 0 && <span className="v-filter-count">{counts[f.key]}</span>}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center gap-1.5 px-1">
-        <span className="text-[11px] text-ink-300">类型</span>
+      <div className="v-task-kind-filter">
+        <span>类型</span>
         {[
           { key: 'all' as const, label: '全部' },
           { key: 'remind' as const, label: '他托我提醒' },
@@ -372,10 +371,8 @@ export default function Tasks() {
             key={k.key}
             type="button"
             onClick={() => setKind(k.key)}
-            className={clsx(
-              'rounded-full px-2.5 py-0.5 text-[11.5px] transition',
-              kindFilter === k.key ? 'bg-rose-soft/18 font-medium text-rose-deep' : 'text-ink-500 hover:bg-cream-100',
-            )}
+            aria-pressed={kindFilter === k.key}
+            className={kindFilter === k.key ? 'active' : ''}
           >
             {k.label}
           </button>
@@ -387,8 +384,8 @@ export default function Tasks() {
           <Loader2 size={14} className="animate-spin" /> 正在读取本机事项…
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-cream-300 bg-white/60 px-6 py-10 text-center">
-          <Circle size={22} className="mx-auto text-cream-300" />
+        <div className="v-task-empty">
+          <Circle size={22} className="mx-auto" />
           <p className="mt-2 text-[13px] font-medium text-ink-700">
             {filter === 'today'
               ? '今天没有要提醒他的事'
@@ -403,7 +400,7 @@ export default function Tasks() {
           </p>
         </div>
       ) : (
-        <ul className="space-y-2">
+        <ul className="v-task-list">
           {filtered.map((r) => (
             <TaskRow
               key={r.task.id}
@@ -427,7 +424,7 @@ export default function Tasks() {
         </ul>
       )}
 
-      <p className="px-1 pb-2 text-[11px] leading-relaxed text-ink-300">
+      <p className="v-task-footnote">
         时区 {DEFAULT_TIME_ZONE}。重复事项按日历推进，月末不存在的日期会收敛到当月最后一天。
         「提醒过他了」与「他办完了」是两件事，勾选完成只记录前者。
       </p>
@@ -480,7 +477,7 @@ function StateBar({
   onTest: () => void
 }) {
   return (
-    <div className="space-y-2 rounded-2xl border border-cream-200 bg-white p-3 shadow-card">
+    <div className="v-task-state">
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1 rounded-full bg-cream-100 px-2.5 py-0.5 text-[11px] text-ink-700">
           <RefreshCw size={11} />
@@ -577,9 +574,9 @@ function TaskRow({
   return (
     <li
       className={clsx(
-        'rounded-2xl border bg-white p-3 shadow-card transition',
-        focused ? 'border-rose-soft ring-2 ring-rose-soft/25' : 'border-cream-200',
-        task.status === 'cancelled' && 'opacity-70',
+        'v-task-row',
+        focused && 'focused',
+        task.status === 'cancelled' && 'cancelled',
       )}
     >
       <div className="flex items-start gap-2.5">
@@ -589,11 +586,9 @@ function TaskRow({
           disabled={task.status === 'cancelled'}
           aria-label={task.status === 'done' ? '撤销完成' : '标记完成'}
           className={clsx(
-            'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition',
-            task.status === 'done'
-              ? 'border-[#8CBF9B] bg-[#8CBF9B] text-white'
-              : 'border-cream-300 text-transparent hover:border-rose-soft',
-            task.status === 'cancelled' && 'border-cream-300 bg-cream-100',
+            'v-task-check',
+            task.status === 'done' && 'done',
+            task.status === 'cancelled' && 'cancelled',
           )}
         >
           <Check size={12} />
@@ -609,9 +604,7 @@ function TaskRow({
             >
               {task.title}
             </p>
-            <span className="shrink-0 rounded-full bg-cream-100 px-2 py-0.5 text-[10.5px] text-ink-500">
-              {KIND_LABEL[task.kind]}
-            </span>
+            <span className="v-task-kind-tag">{KIND_LABEL[task.kind]}</span>
           </div>
 
           <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-ink-500">
@@ -685,14 +678,14 @@ function TaskRow({
             <button
               type="button"
               onClick={onDelete}
-              className="inline-flex items-center gap-1 rounded-full border border-cream-300 bg-white px-2 py-0.5 text-[11px] text-ink-300 hover:text-rose-deep"
+              className="v-task-action danger"
             >
               <Trash2 size={11} /> 删除
             </button>
           </div>
 
           {snoozeOpen && task.status === 'open' && (
-            <div className="mt-2 flex flex-wrap gap-1.5 rounded-xl bg-cream-50 p-2">
+            <div className="v-task-snooze">
               {SNOOZE_OPTIONS.map((o) => (
                 <button
                   key={o.label}
@@ -723,7 +716,7 @@ function SmallBtn({ onClick, icon, label }: { onClick: () => void; icon: React.R
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-full border border-cream-300 bg-white px-2 py-0.5 text-[11px] text-ink-500 transition hover:text-rose-deep"
+      className="v-task-action"
     >
       {icon} {label}
     </button>
@@ -739,8 +732,8 @@ function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => 
   const [share, setShare] = useState(false)
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
-      <div className="absolute inset-0 bg-[#4A3B31]/40 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative w-full max-w-[420px] rounded-t-3xl bg-[#FFFCF8] p-4 sm:rounded-3xl">
+      <div className="absolute inset-0 bg-[#151827]/45 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="v-task-complete-dialog relative w-full max-w-[420px] rounded-t-3xl p-5 sm:rounded-3xl">
         <p className="text-[15px] font-semibold text-ink-900">
           {task.kind === 'remind' ? '我已经提醒过他了' : '这件事已经办好了'}
         </p>

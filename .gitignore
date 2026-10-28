@@ -6,6 +6,7 @@ dist/
 dist-ssr/
 # 展示端公网发布产物（只含 viewer，不含作者端）
 dist-viewer/
+dist-viewer-*/
 dist-publish/
 *.local
 

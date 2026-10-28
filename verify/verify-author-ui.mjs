@@ -131,15 +131,20 @@ try {
       editableBadge: t.includes('编辑模式'),
       personEdit: t.includes('编辑人物资料'),
       nodes: [...document.querySelectorAll('[data-testid="universe"] button[aria-label]')].filter(b => /共 |暂无内容/.test(b.getAttribute('aria-label'))).length,
-      nav: ['首页','故事','相册','档案','设置'].filter(k => t.includes(k)),
+      nav: [...document.querySelectorAll('nav[aria-label="手机主导航"] a')].map(a => a.textContent.trim()),
+      settingsTop: !!document.querySelector('a[aria-label="设置"]'),
       imageCount: [...document.images].filter(i => i.complete && i.naturalWidth > 0).length,
     };
   })()`)
   if (!home.editableBadge) problems.push('缺少「编辑模式」标记')
   if (!home.personEdit) problems.push('首页缺少「编辑人物资料」入口')
   if (home.nodes !== 5) problems.push(`宇宙节点 ${home.nodes} 个`)
-  if (!home.nav.includes('设置')) problems.push('底部导航缺少「设置」')
-  notes.push(`首页：编辑模式=${home.editableBadge}，节点 ${home.nodes}，图片 ${home.imageCount}，导航 ${home.nav.join('/')}`)
+  const expectedNav = ['首页', '故事', '相册', '档案', '互动', '记着', '回忆录']
+  if (home.nav.length !== expectedNav.length || expectedNav.some((label) => !home.nav.includes(label))) {
+    problems.push(`作者底栏不是完整七项：${home.nav.join('/')}`)
+  }
+  if (!home.settingsTop) problems.push('设置入口未保留在顶栏')
+  notes.push(`首页：编辑模式=${home.editableBadge}，节点 ${home.nodes}，图片 ${home.imageCount}，底栏 ${home.nav.join('/')}，顶栏设置=${home.settingsTop}`)
   await cdp.shot('04-author-home.png')
 
   /* 3. 故事页新增一条记录 */
@@ -574,12 +579,18 @@ try {
   await sleep(2200)
   const settings = await cdp.evaluate(`(() => {
     const t = document.body.innerText
-    return { backup: t.includes('完整备份与恢复'), sync: t.includes('多端同步'), cloud: t.includes('云服务') };
+    return {
+      backup: t.includes('完整备份与恢复'),
+      sync: t.includes('多端同步'),
+      cloud: t.includes('云服务'),
+      activeBottom: [...document.querySelectorAll('nav[aria-label="手机主导航"] a.v-bottom-nav-link.active')].map(a => a.textContent.trim()),
+    };
   })()`)
   if (!settings.backup) problems.push('设置页缺少备份入口')
   if (!settings.sync) problems.push('设置页缺少多端同步入口')
   if (!settings.cloud) problems.push('设置页缺少云服务入口')
-  notes.push(`设置页：备份=${settings.backup}，同步=${settings.sync}，云服务=${settings.cloud}`)
+  if (settings.activeBottom.length) problems.push(`设置在顶栏，但底栏仍误标选中：${settings.activeBottom.join('/')}`)
+  notes.push(`设置页：备份=${settings.backup}，同步=${settings.sync}，云服务=${settings.cloud}，底栏误选=${settings.activeBottom.join('/') || '无'}`)
   await cdp.shot('07-author-settings.png')
 
   /* 6. 多端同步面板：范围说明应含照片与删除，且不再写「暂不同步」 */
@@ -1052,6 +1063,46 @@ try {
   if (!authorHall.timeline || !authorHall.quiz || !authorHall.dateDraw || !authorHall.treasure) problems.push(`作者端大厅缺第三/四版玩法：${JSON.stringify(authorHall)}`)
   notes.push(`互动内容：创建/刷新/编辑/停用通过，大厅第三/四版入口=${JSON.stringify(authorHall)}`)
   await cdp.shot('10-game-content.png')
+
+  /* UI-E/G：桌面代表页复核 */
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
+  for (const [path, file, key] of [
+    ['/#/archive', '15-archive-desktop.png', '档案'],
+    ['/#/memoir', '16-memoir-desktop.png', '回忆录'],
+    ['/#/settings', '17-settings-desktop.png', '设置'],
+  ]) {
+    await cdp.send('Page.navigate', { url: `${BASE}${path}` })
+    await sleep(1800)
+    const info = await cdp.evaluate(`(() => ({
+      text: document.body.innerText.length,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }))()`)
+    if (info.text < 80) problems.push(`桌面${key}页几乎未渲染`)
+    if (info.overflow > 1) problems.push(`桌面${key}页横向溢出 ${info.overflow}px`)
+    await cdp.shot(file)
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 2, mobile: true })
+  for (const [path, file, key] of [
+    ['/#/archive', '18-archive-narrow.png', '档案'],
+    ['/#/memoir', '19-memoir-narrow.png', '回忆录'],
+    ['/#/settings', '20-settings-narrow.png', '设置'],
+  ]) {
+    await cdp.send('Page.navigate', { url: `${BASE}${path}` })
+    await sleep(1600)
+    const info = await cdp.evaluate(`(() => ({
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      nav: document.querySelectorAll('nav[aria-label="手机主导航"] a').length,
+      active: [...document.querySelectorAll('nav[aria-label="手机主导航"] a.v-bottom-nav-link.active')].map(a => a.textContent.trim()),
+      hash: location.hash,
+    }))()`)
+    if (info.overflow > 1) problems.push(`320px ${key}页横向溢出 ${info.overflow}px`)
+    if (info.nav !== 7) problems.push(`320px ${key}页底栏只有 ${info.nav} 项`)
+    if (info.active.length > 1 || (info.active.length === 1 && info.active[0] !== key)) {
+      problems.push(`320px ${key}页底栏选中异常：${info.active.join('/')}（${info.hash}）`)
+    }
+    await cdp.shot(file)
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
 
   if (cdp.logs.length) problems.push(`控制台错误：${cdp.logs.slice(0, 2).join(' | ')}`)
 } finally {

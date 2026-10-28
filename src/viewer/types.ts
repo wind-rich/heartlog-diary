@@ -325,4 +325,4 @@ export interface PublishedSnapshot {
 }
 
 /** 原型阶段的场景：默认演示 / 空态 / 压力数据 */
-export type SnapshotScene = 'demo' | 'empty' | 'stress' | 'broken' | 'long'
+export type SnapshotScene = 'demo' | 'empty' | 'stress' | 'broken' | 'long' | 'plain'

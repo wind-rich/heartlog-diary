@@ -5,7 +5,7 @@ import { hashSeed } from '../data/media'
  * 星点背景：用确定性散列生成，保证每次渲染位置一致。
  * 纯装饰，不进入可访问树。
  */
-export function StarField({ count = 46, opacity = 0.7 }: { count?: number; opacity?: number }) {
+export function StarField({ count = 72, opacity = 0.7 }: { count?: number; opacity?: number }) {
   const stars = useMemo(() => {
     const out: { x: number; y: number; r: number; o: number; delay: number }[] = []
     for (let i = 0; i < count; i++) {

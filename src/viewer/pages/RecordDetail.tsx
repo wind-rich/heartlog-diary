@@ -50,7 +50,7 @@ export default function RecordDetail() {
   const [editing, setEditing] = useState(false)
 
   return (
-    <article className="mx-auto max-w-[720px] space-y-5">
+    <article className="v-record-detail mx-auto max-w-[760px] space-y-6">
       <BackLink />
 
       {editable && reload && entry && (
@@ -91,8 +91,9 @@ export default function RecordDetail() {
         </div>
       )}
 
-      <header className="px-1">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-500">
+      <header className="v-record-header">
+        <div className="v-eyebrow">A PAGE FROM OUR DAYS</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-[#666174]">
           <span className="tabular-nums text-ink-700">{entryDateText(entry.occurredAt)}</span>
           <span className="text-cream-300">·</span>
           <span>{KIND_LABEL[entry.kind]}</span>
@@ -104,13 +105,13 @@ export default function RecordDetail() {
           )}
           {entry.quick && <Pill>快速记录</Pill>}
         </div>
-        <h1 className="mt-2 text-[20px] font-semibold leading-snug text-ink-900">{entry.title}</h1>
+        <h1>{entry.title}</h1>
       </header>
 
       <TreasureTargetAction targetType="entry" targetId={entry.id} />
 
       {photos.length > 0 && (
-        <div className={clsx('grid gap-1.5', photos.length === 1 ? 'grid-cols-1' : photos.length === 2 ? 'grid-cols-2' : 'grid-cols-3')}>
+        <div className={clsx('v-record-photos grid gap-2', photos.length === 1 ? 'grid-cols-1' : photos.length === 2 ? 'grid-cols-2' : 'grid-cols-3')}>
           {photos.map((p, i) => (
             <PhotoTile
               key={p.id}
@@ -125,13 +126,13 @@ export default function RecordDetail() {
 
       <div className="space-y-3">
         {entry.content && (
-          <section className="rounded-2xl border border-cream-200 bg-white p-4 shadow-card">
-            <p className="whitespace-pre-wrap text-[13.5px] leading-[1.85] text-ink-700">{entry.content}</p>
+          <section className="v-paper-section v-record-content">
+            <p className="whitespace-pre-wrap">{entry.content}</p>
           </section>
         )}
 
         {entry.taSaid && (
-          <section className="relative rounded-2xl border border-rose-soft/35 bg-[#FFF7F2] p-4">
+          <section className="v-quote-section relative p-5 sm:p-6">
             <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-rose-deep">
               <Quote size={12} />
               TA 说的话
@@ -142,7 +143,7 @@ export default function RecordDetail() {
         )}
 
         {entry.myObservation && (
-          <section className="rounded-2xl border border-cream-200 bg-[#FBF7F1] p-4">
+          <section className="v-observation-section p-5 sm:p-6">
             <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-ink-500">
               <Eye size={12} />
               我的观察
@@ -241,7 +242,7 @@ export default function RecordDetail() {
 
 function BackLink() {
   return (
-    <Link to="/stories" className="inline-flex items-center gap-1 px-1 text-[12px] text-ink-500 transition hover:text-rose-deep">
+    <Link to="/stories" className="v-back-link">
       <ArrowLeft size={14} />
       回到故事
     </Link>

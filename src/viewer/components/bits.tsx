@@ -6,25 +6,25 @@ import { Link } from 'react-router-dom'
 export function SectionHead({
   title,
   hint,
+  eyebrow,
   to,
   actionLabel = '查看全部',
 }: {
   title: string
   hint?: string
+  eyebrow?: string
   to?: string
   actionLabel?: string
 }) {
   return (
-    <div className="mb-3 flex items-end justify-between gap-3 px-1">
+    <div className="v-section-head">
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold tracking-wide text-ink-900">{title}</h2>
-        {hint && <p className="mt-0.5 text-[11.5px] text-ink-500">{hint}</p>}
+        {eyebrow && <div className="v-eyebrow">{eyebrow}</div>}
+        <h2 className="v-section-title">{title}</h2>
+        {hint && <p className="v-section-hint">{hint}</p>}
       </div>
       {to && (
-        <Link
-          to={to}
-          className="-my-2 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-1 text-[12px] text-rose-deep transition hover:bg-rose-soft/10"
-        >
+        <Link to={to} className="v-section-action">
           {actionLabel}
           <ArrowRight size={13} />
         </Link>

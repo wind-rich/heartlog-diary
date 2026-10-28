@@ -153,10 +153,18 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-3 pb-6">
-      <button className="btn-text" onClick={() => nav(-1)}>
+    <div className="v-settings-page mx-auto max-w-[920px] pb-6">
+      <button className="v-back-link" onClick={() => nav(-1)}>
         <ArrowLeft size={15} /> 返回
       </button>
+
+      <header className="v-page-header">
+        <div>
+          <div className="v-eyebrow">SETTINGS &amp; KEEPING</div>
+          <h1>设置</h1>
+          <p>只调整功能和展示方式，不改动已经写下的记录。同步、备份、发布与撤回各自独立，不能互相替代。</p>
+        </div>
+      </header>
 
       {/* AI */}
       <SectionCard
@@ -182,9 +190,9 @@ export default function SettingsPage() {
           <Field label="接入方式">
             <Segmented
               options={[
-                { value: 'cloud', label: '云服务（免密钥）' },
-                { value: 'direct', label: '直连模型接口' },
-                { value: 'proxy', label: '经自建代理' },
+                { value: 'cloud', label: '云服务' },
+                { value: 'direct', label: '直连' },
+                { value: 'proxy', label: '自建代理' },
               ]}
               value={aiConfig.provider === 'cloud' ? 'cloud' : aiConfig.viaProxy ? 'proxy' : 'direct'}
               onChange={(v) => {

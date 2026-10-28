@@ -62,15 +62,15 @@ export function PreviewPanel({ title, subtitle, icon: Icon, accent, onClose, all
         type="button"
         aria-label="关闭预览"
         onClick={onClose}
-        className="v-fade absolute inset-0 cursor-default bg-[#2A1A20]/45 backdrop-blur-[2px]"
+        className="v-fade absolute inset-0 cursor-default bg-[#151827]/50 backdrop-blur-[2px]"
         tabIndex={-1}
       />
 
       <div
         ref={panelRef}
-        className="v-panel-responsive relative flex max-h-[78vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-pop md:max-h-none md:h-full md:w-[400px] md:rounded-none"
+        className="v-preview-panel v-panel-responsive relative flex max-h-[78vh] w-full flex-col overflow-hidden rounded-t-3xl shadow-pop md:max-h-none md:h-full md:w-[400px] md:rounded-none"
       >
-        <div className="flex items-start gap-3 border-b border-cream-200 px-4 pb-3 pt-4">
+        <div className="v-preview-head flex items-start gap-3 px-4 pb-3 pt-4">
           <span
             className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
             style={{ background: `${accent}22`, color: accent }}
@@ -78,8 +78,8 @@ export function PreviewPanel({ title, subtitle, icon: Icon, accent, onClose, all
             <Icon size={17} />
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="text-[15px] font-semibold text-ink-900">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-[11.5px] text-ink-500">{subtitle}</p>}
+            <h3 className="v-preview-title">{title}</h3>
+            {subtitle && <p className="v-preview-subtitle">{subtitle}</p>}
           </div>
           <button
             ref={closeRef}
@@ -95,11 +95,11 @@ export function PreviewPanel({ title, subtitle, icon: Icon, accent, onClose, all
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">{children}</div>
 
         {allHref && (
-          <div className="border-t border-cream-200 bg-[#FFFDFA] px-4 py-3">
+          <div className="v-preview-foot px-4 py-3">
             <Link
               to={allHref}
               onClick={onClose}
-              className="flex w-full items-center justify-center gap-1 rounded-xl bg-rose-deep px-4 py-2.5 text-[13.5px] font-medium text-white transition hover:brightness-105"
+              className="v-preview-all"
             >
               {allLabel}
               <ArrowRight size={14} />

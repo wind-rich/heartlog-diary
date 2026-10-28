@@ -18,7 +18,8 @@ export default defineConfig({
   plugins: [react()],
   build: {
     target: 'es2020',
-    outDir: 'dist-viewer',
+    // 发布前校验可以指定独立候选目录，避免覆盖现有 dist-viewer。
+    outDir: process.env.HL_VIEWER_OUT || 'dist-viewer',
     emptyOutDir: true,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {

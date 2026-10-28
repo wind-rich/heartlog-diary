@@ -243,61 +243,71 @@ export default function MemoirPage() {
   const pickerEntries = current ? scopedEntries(current) : []
 
   return (
-    <div className="space-y-4 pb-6">
-      <div className="flex items-center gap-2">
-        <button type="button" className="btn-text inline-flex items-center gap-1 px-0 py-0 text-[12.5px]" onClick={() => nav(-1)}>
-          <ArrowLeft size={13} /> 返回
+    <div className="v-memoir-page">
+      <header className="v-page-header v-memoir-header">
+        <div className="min-w-0">
+          <button type="button" className="v-back-link" onClick={() => nav(-1)}>
+            <ArrowLeft size={13} /> 返回
+          </button>
+          <div className="v-eyebrow">OUR STORY, IN CHAPTERS</div>
+          <h1>回忆录</h1>
+          <p>{memoirs.length ? `${memoirs.length} 本手稿 · 人工整理是主线，AI 只提供可选的独立草稿。` : '把零散的记录，慢慢整理成一段完整的故事。'}</p>
+        </div>
+        <button type="button" className="btn-primary inline-flex min-h-11 shrink-0 items-center gap-1.5 px-4 text-[13px]" onClick={() => void doCreate()}>
+          <Plus size={15} /> 新建回忆录
         </button>
-        <div className="flex-1" />
-        <button type="button" className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px]" onClick={() => void doCreate()}>
-          <Plus size={13} /> 新建回忆录
-        </button>
-      </div>
+      </header>
 
-      <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="v-memoir-layout">
         {/* 左侧：回忆录列表 */}
-        <aside className="space-y-1.5">
-          {memoirs.length === 0 && <p className="text-[12.5px] text-ink-400">还没有回忆录。点右上角新建。</p>}
+        <aside className="v-memoir-library">
+          <div className="v-memoir-library-head">
+            <span>MANUSCRIPT</span>
+            <b>{memoirs.length} 本</b>
+          </div>
+          {memoirs.length === 0 && <p className="v-memoir-empty-copy">还没有回忆录。点上方新建一本。</p>}
           {memoirs.map((m) => (
             <button
               key={m.id}
               type="button"
               onClick={() => setCurrent(m)}
-              className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                current?.id === m.id ? 'border-rose-soft/60 bg-rose-soft/10' : 'border-cream-200 bg-white hover:bg-cream-50'
-              }`}
+              className={`v-memoir-item ${current?.id === m.id ? 'active' : ''}`}
             >
-              <p className="truncate text-[13px] font-medium text-ink-800">{m.title}</p>
-              <p className="mt-0.5 text-[11px] text-ink-400">
-                {m.sections.length} 章 · {memoirLength(m)} 字 · {m.status === 'final' ? '已定稿' : '草稿'}
-              </p>
+              <span className="v-memoir-item-index">{String(memoirs.findIndex((item) => item.id === m.id) + 1).padStart(2, '0')}</span>
+              <span className="min-w-0 flex-1">
+                <p>{m.title}</p>
+                <small>{m.sections.length} 章 · {memoirLength(m)} 字 · {m.status === 'final' ? '已定稿' : '草稿'}</small>
+              </span>
             </button>
           ))}
         </aside>
 
         {/* 右侧：编辑区 */}
         {!current ? (
-          <div className="rounded-2xl border border-dashed border-cream-300 bg-cream-50/60 px-4 py-16 text-center">
-            <BookMarked size={22} className="mx-auto text-rose-soft" />
-            <p className="mt-2 text-[13px] text-ink-500">选一本回忆录，或者新建一本开始写。</p>
-            <p className="mt-1 text-[11.5px] text-ink-400">回忆录只在自己这里；要给别人看，导出文稿包发出去。</p>
+          <div className="v-memoir-blank">
+            <BookMarked size={24} />
+            <p>选一本回忆录，或者新建一本开始写。</p>
+            <span>回忆录只在自己这里；要给别人看，导出文稿包发出去。</span>
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-cream-200 bg-white px-4 py-3">
+          <div className="v-memoir-editor">
+            <div className="v-memoir-editor-head">
+              <div className="v-eyebrow">MANUSCRIPT / {current.status === 'final' ? 'FINAL' : 'DRAFT'}</div>
               <input
-                className="w-full border-0 bg-transparent text-[17px] font-semibold text-ink-900 outline-none placeholder:text-ink-300"
+                className="v-memoir-title-input"
                 value={current.title}
                 placeholder="回忆录标题"
+                aria-label="回忆录标题"
                 onChange={(e) => patchCurrent({ title: e.target.value })}
               />
               <input
-                className="mt-1 w-full border-0 bg-transparent text-[12.5px] text-ink-500 outline-none placeholder:text-ink-300"
+                className="v-memoir-subtitle-input"
                 value={current.subtitle ?? ''}
                 placeholder="副标题（可留空）"
+                aria-label="副标题"
                 onChange={(e) => patchCurrent({ subtitle: e.target.value })}
               />
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] text-ink-500">
+              <div className="v-memoir-range">
                 <span>取材范围</span>
                 <input
                   type="date"
@@ -314,8 +324,8 @@ export default function MemoirPage() {
                 />
                 <span className="text-ink-400">（留空表示不限；只影响 AI 素材，不影响已写内容）</span>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button type="button" className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px]" onClick={() => void doSave()} disabled={saving}>
+              <div className="v-memoir-actions">
+                <button type="button" className="btn-primary inline-flex min-h-11 items-center gap-1.5 px-3 text-[12.5px]" onClick={() => void doSave()} disabled={saving}>
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} 保存
                 </button>
                 <button type="button" className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px]" onClick={() => void doExportOne()}>
@@ -337,7 +347,7 @@ export default function MemoirPage() {
             </div>
 
             {/* AI 说明与额外要求：不可用时只是提示，不影响手写 */}
-            <div className="rounded-2xl border border-cream-200 bg-cream-50 px-4 py-2.5 text-[11.5px] leading-relaxed text-ink-500">
+            <div className="v-memoir-ai-panel">
               <div className="flex flex-wrap items-center gap-2">
                 <Sparkles size={13} className="text-rose-deep" />
                 <span className="font-medium text-ink-700">AI 草稿（可选）</span>
@@ -356,12 +366,14 @@ export default function MemoirPage() {
 
             {/* 章节 */}
             {current.sections.map((s, i) => (
-              <div key={s.id} className="rounded-2xl border border-cream-200 bg-white px-4 py-3">
-                <div className="flex flex-wrap items-center gap-2">
+              <div key={s.id} className="v-memoir-chapter">
+                <div className="v-memoir-chapter-head">
+                  <span className="v-memoir-chapter-index">{String(i + 1).padStart(2, '0')}</span>
                   <input
-                    className="min-w-0 flex-1 border-0 bg-transparent text-[14px] font-medium text-ink-800 outline-none"
+                    className="v-memoir-chapter-title"
                     value={s.heading}
                     placeholder="章节标题"
+                    aria-label={`第 ${i + 1} 章标题`}
                     onChange={(e) => patchLocalSection(s.id, { heading: e.target.value })}
                   />
                   <span
@@ -393,7 +405,7 @@ export default function MemoirPage() {
                 </div>
 
                 <textarea
-                  className="mt-2 min-h-[120px] w-full resize-y rounded-xl border border-cream-200 bg-cream-50/60 px-3 py-2 text-[12.5px] leading-relaxed text-ink-700 outline-none focus:border-rose-soft"
+                  className="v-memoir-textarea"
                   value={s.body}
                   placeholder="在这里写这一章。想引用具体记录就点下面的「引用记录」，写好后保存。"
                   onChange={(e) => patchLocalSection(s.id, { body: e.target.value })}
@@ -441,7 +453,7 @@ export default function MemoirPage() {
             </div>
 
             {preview && (
-              <div className="rounded-2xl border border-cream-200 bg-white px-4 py-3">
+              <div className="v-memoir-preview">
                 <p className="mb-2 text-[11.5px] text-ink-400">预览（只读，未保存的改动也会显示）</p>
                 <h2 className="text-[17px] font-semibold text-ink-900">{current.title}</h2>
                 {current.subtitle && <p className="mt-0.5 text-[12.5px] text-ink-500">{current.subtitle}</p>}

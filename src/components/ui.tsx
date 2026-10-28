@@ -139,7 +139,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
       <div
         ref={ref}
         className={clsx(
-          'relative w-full bg-cream-50 flex flex-col shadow-pop animate-fade-up sm:animate-none',
+          'v-modal-panel relative w-full flex flex-col shadow-pop animate-fade-up sm:animate-none',
           sheet ? 'rounded-t-3xl sm:rounded-3xl' : 'rounded-3xl',
           maxWidth,
           'sm:max-h-[88vh]',
@@ -150,8 +150,8 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
       >
         {sheet && <div className="sm:hidden pt-2.5 pb-1 flex justify-center"><div className="w-10 h-1 rounded-full bg-cream-300" /></div>}
         {(title || !sheet) && (
-          <div className="flex items-center gap-3 px-4 pt-3 pb-3 border-b border-cream-200">
-            <div className="text-[17px] font-semibold text-ink-900 flex-1 min-w-0 truncate">{title}</div>
+          <div className="v-modal-head flex items-center gap-3 px-4 pt-3 pb-3">
+            <div className="v-modal-title flex-1 min-w-0 truncate">{title}</div>
             <button
               onClick={onClose}
               aria-label="关闭"
@@ -162,7 +162,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
           </div>
         )}
         <div className="flex-1 overflow-y-auto px-4 py-4">{children}</div>
-        {footer && <div className="px-4 py-3 border-t border-cream-200 bg-cream-50">{footer}</div>}
+        {footer && <div className="v-modal-foot px-4 py-3">{footer}</div>}
       </div>
     </div>
   )
@@ -348,24 +348,16 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="w-full flex items-start gap-3 text-left py-2.5"
+      className="v-switch-row w-full flex items-start gap-3 text-left py-2.5"
     >
       <div className="flex-1 min-w-0">
         <div className="text-[15px] text-ink-900">{label}</div>
         {desc && <div className="text-[12.5px] text-ink-300 mt-0.5 leading-snug">{desc}</div>}
       </div>
       <div
-        className={clsx(
-          'w-11 h-6.5 rounded-full shrink-0 mt-0.5 relative transition',
-          checked ? 'bg-rose-deep' : 'bg-cream-300',
-        )}
+        className={clsx('v-switch shrink-0', checked ? 'on' : '')}
         style={{ height: 26, width: 46 }}
-      >
-        <div
-          className="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow transition-all"
-          style={{ left: checked ? 23 : 3 }}
-        />
-      </div>
+      />
     </button>
   )
 }
@@ -419,10 +411,10 @@ export function SectionCard({
   className?: string
 }) {
   return (
-    <section className={clsx('card card-pad', className)}>
+    <section className={clsx('v-section-card card card-pad', className)}>
       {(title || action) && (
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[15px] font-semibold text-ink-900 flex items-center gap-1.5">{title}</h2>
+        <div className="v-section-card-head flex items-center justify-between mb-3">
+          <h2 className="flex items-center gap-1.5">{title}</h2>
           {action}
         </div>
       )}

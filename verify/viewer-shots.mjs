@@ -90,18 +90,22 @@ const SHOTS = [
   { file: '02-home-mobile-fold.png', path: '/viewer.html#/', vp: [390, 844, 1], viewportOnly: true },
   { file: '03-stories-mobile.png', path: '/viewer.html#/stories', vp: [390, 844, 1], viewportOnly: true },
   { file: '04-detail-mobile.png', path: '/viewer.html#/stories/e_01', vp: [390, 844, 1], viewportOnly: true },
+  { file: '04b-game-mobile.png', path: '/viewer.html#/game', vp: [390, 844, 1], viewportOnly: true },
+  { file: '04c-game-desktop.png', path: '/viewer.html#/game', vp: [1440, 900, 1], viewportOnly: true },
   { file: '05-album-mobile.png', path: '/viewer.html#/album', vp: [390, 844, 1], viewportOnly: true },
   { file: '06-archive-mobile.png', path: '/viewer.html#/archive?tab=portrait', vp: [390, 844, 1], viewportOnly: true },
   { file: '07-preview-mobile.png', path: '/viewer.html?mode=preview#/', vp: [390, 844, 1], viewportOnly: true },
   { file: '08-home-narrow.png', path: '/viewer.html#/', vp: [320, 740, 1], viewportOnly: true },
   { file: '09-home-empty.png', path: '/viewer.html?scene=empty#/', vp: [390, 844, 1], viewportOnly: true },
   { file: '10-home-desktop.png', path: '/viewer.html#/', vp: [1440, 900, 1], viewportOnly: true },
+  { file: '10b-home-desktop-full.png', path: '/viewer.html#/', vp: [1440, 900, 1] },
   { file: '11-album-desktop.png', path: '/viewer.html#/album', vp: [1440, 900, 1], viewportOnly: true },
   { file: '12-stories-desktop.png', path: '/viewer.html#/stories', vp: [1440, 900, 1], viewportOnly: true },
   { file: '16-home-full.png', path: '/viewer.html#/', vp: [390, 844, 2] },
   { file: '18-home-long-text.png', path: '/viewer.html?scene=long#/', vp: [320, 740, 1], viewportOnly: true },
   { file: '19-home-text-zoom.png', path: '/viewer.html#/', vp: [195, 422, 2], zoom200: true, viewportOnly: true },
   { file: '20-stories-text-zoom.png', path: '/viewer.html#/stories', vp: [195, 422, 2], zoom200: true, viewportOnly: true },
+  { file: '21-home-games-off.png', path: '/viewer.html?scene=plain#/', vp: [390, 844, 1], viewportOnly: true },
 ]
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'hl-viewer-'))
@@ -154,7 +158,11 @@ try {
       mobile: w < 700,
     })
     await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 })
-    await cdp.send('Page.navigate', { url: `${BASE}${s.path}` })
+    const targetUrl = new URL(s.path, BASE)
+    if (!targetUrl.searchParams.has('scene') && !targetUrl.searchParams.has('mode')) {
+      targetUrl.searchParams.set('source', 'sample')
+    }
+    await cdp.send('Page.navigate', { url: targetUrl.toString() })
     await sleep(s.path.includes('stress') ? 3500 : 1800)
 
     const info = await cdp.evaluate(`(() => {
@@ -189,7 +197,7 @@ try {
 
   // 交互冒烟：键盘打开节点面板 → Esc 关闭 → 焦点回到节点
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
-  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html#/` })
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample#/` })
   await sleep(1800)
 
   await cdp.evaluate(`(() => {
@@ -231,7 +239,7 @@ try {
   await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
   await sleep(300)
   const motion = await cdp.evaluate(`(() => {
-    const el = document.querySelector('.v-orbit-spin');
+    const el = document.querySelector('.v-twinkle');
     return el ? getComputedStyle(el).animationName : 'missing';
   })()`)
   if (motion !== 'none') problems.push(`减少动态效果下轨道动画仍为 ${motion}`)
@@ -251,7 +259,7 @@ try {
   })()`)
   const pausedState = await cdp.evaluate(`(() => {
     const el = document.querySelector('.v-universe');
-    const spin = document.querySelector('.v-orbit-spin');
+    const spin = document.querySelector('.v-twinkle');
     return JSON.stringify({ cls: el?.className.includes('v-motion-paused') ?? null, state: spin ? getComputedStyle(spin).animationPlayState : 'missing' });
   })()`)
   if (pressed !== 'true' || !pausedState.includes('"state":"paused"')) {
@@ -261,6 +269,55 @@ try {
   console.log(`节点面板：${panelText.slice(0, 70)}`)
   console.log(`键盘可访问：Esc 关闭=${afterEsc.closed}，焦点回到「${afterEsc.focus}」`)
   console.log(`减少动态效果：animationName=${motion}；手动暂停：aria-pressed=${pressed}，${pausedState}`)
+
+  // 首页区块与联动：四格数字、三张照片、三篇故事、两项互动
+  await cdp.evaluate('window.scrollTo(0, 0)')
+  const blocks = await cdp.evaluate(`(() => ({
+    milestones: document.querySelectorAll('.v-milestone').length,
+    postcards: document.querySelectorAll('.v-postcard').length,
+    stories: document.querySelectorAll('.v-story-cover').length,
+    games: document.querySelectorAll('.v-home-games .v-game-card').length,
+    storyHref: document.querySelector('.v-story-cover')?.getAttribute('href') || '',
+    gameHref: document.querySelector('.v-home-games a.v-game-card')?.getAttribute('href') || '',
+    nav: [...document.querySelectorAll('nav[aria-label="手机主导航"] a')].map(a => a.textContent.trim()),
+  }))()`)
+  if (blocks.milestones !== 4) problems.push(`首页纪念数字 ${blocks.milestones} 格，预期 4 格`)
+  if (blocks.postcards !== 3) problems.push(`首页外露照片 ${blocks.postcards} 张，预期 3 张`)
+  if (blocks.stories !== 3) problems.push(`首页故事卡 ${blocks.stories} 张，预期 3 张`)
+  if (blocks.games < 1 || blocks.games > 2) problems.push(`首页精选互动 ${blocks.games} 项，预期 1～2 项`)
+  if (!blocks.storyHref.includes('/stories/')) problems.push(`首页故事卡链接异常：${blocks.storyHref}`)
+  if (blocks.gameHref && !blocks.gameHref.includes('/game?play=')) problems.push(`首页互动卡链接异常：${blocks.gameHref}`)
+  if (blocks.nav.length !== 5) problems.push(`访客底栏 ${blocks.nav.length} 项，预期 5 项`)
+
+  const photoOpen = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('.v-postcard-photo');
+    if (!btn) return 'no-photo';
+    btn.focus();
+    btn.click();
+    return 'clicked';
+  })()`)
+  await sleep(400)
+  const photoDialog = await cdp.evaluate(`!!document.querySelector('[role="dialog"]')`)
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp.send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 })
+  }
+  await sleep(350)
+  const photoFocus = await cdp.evaluate(`(document.activeElement?.className || '').toString().includes('v-postcard-photo')`)
+  if (photoOpen !== 'clicked' || !photoDialog) problems.push('首页照片卡未打开大图')
+  if (!photoFocus) problems.push('关闭首页大图后焦点未回到照片卡')
+  console.log(`首页区块：${blocks.milestones} 格数字 / ${blocks.postcards} 张照片 / ${blocks.stories} 篇故事 / ${blocks.games} 项互动；照片大图=${photoDialog}，焦点恢复=${photoFocus}`)
+
+  // 互动关闭：只剩四项访客导航，首页不出现互动推荐
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?scene=plain#/` })
+  await sleep(1500)
+  const plain = await cdp.evaluate(`(() => ({
+    nav: [...document.querySelectorAll('nav[aria-label="手机主导航"] a')].map(a => a.textContent.trim()),
+    games: document.querySelectorAll('.v-home-games').length,
+    gameNav: [...document.querySelectorAll('nav[aria-label="手机主导航"] a')].some(a => a.textContent.includes('互动')),
+  }))()`)
+  if (plain.nav.length !== 4) problems.push(`关闭互动后底栏 ${plain.nav.length} 项，预期 4 项`)
+  if (plain.games || plain.gameNav) problems.push('关闭互动后首页或底栏仍出现互动入口')
+  console.log(`互动关闭：底栏 ${plain.nav.join('/')}，首页互动区=${plain.games}`)
 
   // 空态：不得出现伪造记录，应有明确空状态
   await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?scene=empty#/` })
@@ -305,7 +362,7 @@ try {
   console.log(`图片失败：${broken.count} 张显示失败占位（${broken.label}）`)
 
   // 相册大图：打开、左右切换、Esc 关闭
-  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html#/album` })
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample#/album` })
   await sleep(1600)
   const box = await cdp.evaluate(`(() => {
     const tile = [...document.querySelectorAll('button[aria-label^="查看照片"]')][0];
@@ -342,6 +399,56 @@ try {
   if (boxNext === boxOpen) problems.push('大图左右切换无效')
   if (!boxClosed) problems.push('Esc 未关闭大图')
   console.log(`相册大图：${boxOpen.replace(/\s+/g, ' ')} → →  ${boxNext.replace(/\s+/g, ' ')} → Esc 关闭 ${boxClosed}`)
+
+  // UI-D：故事时间线、筛选与返回位置
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample#/stories` })
+  await sleep(1600)
+  const storyList = await cdp.evaluate(`(() => ({
+    rows: document.querySelectorAll('.v-story-row').length,
+    months: document.querySelectorAll('.v-story-month').length,
+    filters: document.querySelectorAll('.v-filter-chip').length,
+  }))()`)
+  if (storyList.rows < 3) problems.push(`故事时间线只有 ${storyList.rows} 行`)
+  if (storyList.months < 1) problems.push('故事列表没有月份分组')
+  if (storyList.filters < 5) problems.push('故事类型筛选不完整')
+  await cdp.evaluate(`window.scrollTo(0, 360)`)
+  await sleep(200)
+  const clickedStory = await cdp.evaluate(`(() => {
+    const rows = document.querySelectorAll('.v-story-row');
+    const target = rows[2];
+    if (!target) return '';
+    const href = target.getAttribute('href');
+    target.click();
+    return href || '';
+  })()`)
+  await sleep(800)
+  const detailOpened = await cdp.evaluate(`location.hash.includes('/stories/') && document.querySelector('.v-record-detail') !== null`)
+  await cdp.evaluate('history.back()')
+  await sleep(1200)
+  const storyReturned = await cdp.evaluate(`(() => ({
+    list: document.querySelectorAll('.v-story-row').length,
+    scrollY: Math.round(window.scrollY),
+  }))()`)
+  if (!clickedStory || !detailOpened) problems.push('故事行未进入详情')
+  if (storyReturned.list < 3) problems.push('从故事详情返回后列表未恢复')
+  if (storyReturned.scrollY < 160) problems.push(`从故事详情返回后滚动位置丢失（${storyReturned.scrollY}px）`)
+  console.log(`故事列表：${storyList.rows} 行 / ${storyList.months} 个月份分组 / ${storyList.filters} 个筛选；返回位置 ${storyReturned.scrollY}px`)
+
+  // UI-D：相册按月份分组，手机两列
+  await cdp.send('Page.navigate', { url: `${BASE}/viewer.html?source=sample#/album` })
+  await sleep(1400)
+  const albumLayout = await cdp.evaluate(`(() => {
+    const grid = document.querySelector('.v-album-grid');
+    return {
+      months: document.querySelectorAll('.v-album-month').length,
+      photos: document.querySelectorAll('.v-album-tile').length,
+      columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0,
+    };
+  })()`)
+  if (albumLayout.months < 2) problems.push('相册没有按月份分组')
+  if (!albumLayout.photos) problems.push('相册没有照片')
+  if (albumLayout.columns !== 2) problems.push(`手机相册为 ${albumLayout.columns} 列，预期 2 列`)
+  console.log(`相册：${albumLayout.months} 个月份分组 / ${albumLayout.photos} 张 / 手机 ${albumLayout.columns} 列`)
 
   if (cdp.logs.length) problems.push(`控制台错误 ${cdp.logs.length} 条: ${cdp.logs.slice(0, 3).join(' | ')}`)
 } finally {

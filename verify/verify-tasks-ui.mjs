@@ -205,7 +205,7 @@ try {
 
   /* ---------------- 3. 新增事项（两类各一条） ---------------- */
   async function addTask({ title, kind, due, time, remindOffset }) {
-    await cdp.clickContains('新增')
+    await cdp.clickContains('记一件事')
     await cdp.waitFor(`document.body.innerText.includes('新增事项')`, 8000, '打开新增弹窗')
     // 标题
     await cdp.evaluate(`(() => {
@@ -263,6 +263,7 @@ try {
   const tomorrowStr = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`
 
   await addTask({ title: '提醒他取快递', kind: '他托我提醒', due: todayStr, time: '18:00', remindOffset: 60 })
+  await sleep(3300) // 等操作提示消失，保留干净的清单截图
   await cdp.shot('03-tasks-added.png')
   body = await cdp.text()
   if (!body.includes('提醒他取快递')) problems.push('新增的「他托我提醒」没有出现在清单里')
@@ -595,6 +596,20 @@ try {
   const overflow = await cdp.evaluate(`document.documentElement.scrollWidth > document.documentElement.clientWidth + 1`)
   if (overflow) problems.push('桌面 1440 宽度下清单页出现横向溢出')
   await cdp.shot('08-desktop.png')
+
+  /* ---------------- 12. 320px 窄屏 ---------------- */
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 2, mobile: true })
+  await cdp.send('Page.navigate', { url: `${BASE}/#/tasks` })
+  await sleep(1800)
+  const narrow = await cdp.evaluate(`(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    nav: [...document.querySelectorAll('nav[aria-label="手机主导航"] a')].map(a => a.textContent.trim()),
+    header: document.querySelector('.v-page-header h1')?.textContent?.trim() || '',
+  }))()`)
+  if (narrow.overflow > 1) problems.push(`320px 清单页横向溢出 ${narrow.overflow}px`)
+  if (narrow.nav.length !== 7) problems.push(`320px 底栏入口 ${narrow.nav.length} 项，预期 7 项`)
+  if (narrow.header !== '为他记着') problems.push(`320px 清单页标题异常：${narrow.header}`)
+  await cdp.shot('08b-tasks-narrow.png')
 
   if (cdp.logs.length) problems.push(`页面报错：${cdp.logs.slice(0, 3).join(' | ')}`)
 

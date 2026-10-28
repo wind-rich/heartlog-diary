@@ -23,6 +23,7 @@ import {
   HEALTH_LABEL,
   WISH_LABEL,
   anniversaryDateText,
+  avatarUrlFor,
   daysLeftText,
   upcomingAnniversaries,
 } from '../lib/data'
@@ -68,23 +69,35 @@ export default function Archive() {
   }
 
   return (
-    <div className="mx-auto max-w-[820px] space-y-4">
-      <header className="flex items-start justify-between gap-3 px-1">
-        <div className="min-w-0">
-          <h1 className="text-[19px] font-semibold text-ink-900">{s.person.displayName || '他'}的档案</h1>
-          <p className="mt-1 text-[11.5px] text-ink-500">
-            偏好、心愿、健康、每日状态、画像与回顾都按分类保存；推断出来的内容会标出依据强度，不会写成已确认事实
+    <div className="v-archive-page mx-auto max-w-[920px]">
+      <header className="v-archive-cover">
+        <div className="v-archive-portrait">
+          <img src={avatarUrlFor(s)} alt={`${s.person.displayName || '他'}的照片`} />
+        </div>
+        <div className="v-archive-intro">
+          <div className="v-eyebrow">EVERY LITTLE THING ABOUT YOU</div>
+          <h1>{s.person.displayName || '他'}的档案</h1>
+          <p>
+            {s.person.intro || '偏好、心愿、健康、每日状态、画像与回顾都按分类保存；推断出来的内容会标出依据强度，不会写成已确认事实。'}
           </p>
+          <div className="v-archive-stats" aria-label="档案概览">
+            <span><b>{s.preferences.length}</b>偏好</span>
+            <span><b>{s.wishes.length}</b>心愿</span>
+            <span><b>{s.health.length}</b>健康</span>
+            <span><b>{s.entries.length}</b>记录</span>
+          </div>
         </div>
         {edit.canEdit && tab !== 'wishes' && (
-          <AddButton
-            label="新增"
-            onClick={() => edit.openCreate((TABS.find((t) => t.key === tab)?.kind ?? 'preference') as ArchiveKind)}
-          />
+          <div className="v-archive-add">
+            <AddButton
+              label="新增"
+              onClick={() => edit.openCreate((TABS.find((t) => t.key === tab)?.kind ?? 'preference') as ArchiveKind)}
+            />
+          </div>
         )}
       </header>
 
-      <div className="v-scroll-x -mx-1 flex gap-1.5 overflow-x-auto px-1">
+      <div className="v-archive-tabs v-scroll-x" role="tablist" aria-label="档案分类">
         {TABS.map((t) => {
           const Icon = t.icon
           const active = tab === t.key
@@ -92,28 +105,27 @@ export default function Archive() {
             <button
               key={t.key}
               type="button"
+              role="tab"
+              aria-selected={active}
               onClick={() => setParams({ tab: t.key }, { replace: true })}
-              className={clsx(
-                'inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-[11.5px] transition',
-                active
-                  ? 'border-rose-soft bg-rose-soft/15 font-medium text-rose-deep'
-                  : 'border-cream-300 bg-white text-ink-500 hover:bg-cream-50',
-              )}
+              className={active ? 'v-archive-tab active' : 'v-archive-tab'}
             >
-              <Icon size={12} />
+              <Icon size={13} />
               {t.label}
             </button>
           )
         })}
       </div>
 
-      {tab === 'preferences' && <Preferences edit={edit} />}
-      {tab === 'wishes' && <Wishes edit={edit} />}
-      {tab === 'health' && <Health edit={edit} />}
-      {tab === 'status' && <Statuses edit={edit} />}
-      {tab === 'portrait' && <Portrait edit={edit} />}
-      {tab === 'anniversary' && <Anniversaries edit={edit} />}
-      {tab === 'review' && <Reviews edit={edit} />}
+      <div className="v-archive-content" role="tabpanel">
+        {tab === 'preferences' && <Preferences edit={edit} />}
+        {tab === 'wishes' && <Wishes edit={edit} />}
+        {tab === 'health' && <Health edit={edit} />}
+        {tab === 'status' && <Statuses edit={edit} />}
+        {tab === 'portrait' && <Portrait edit={edit} />}
+        {tab === 'anniversary' && <Anniversaries edit={edit} />}
+        {tab === 'review' && <Reviews edit={edit} />}
+      </div>
 
       {edit.canEdit && (
         <Suspense fallback={null}>
@@ -136,7 +148,7 @@ function AddButton({ onClick, label = '新增' }: { onClick: () => void; label?:
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-rose-soft/60 bg-rose-soft/10 px-2.5 py-1 text-[12px] font-medium text-rose-deep transition hover:bg-rose-soft/20"
+      className="btn-primary inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3.5 text-[12.5px]"
     >
       <Plus size={13} /> {label}
     </button>
@@ -145,10 +157,10 @@ function AddButton({ onClick, label = '新增' }: { onClick: () => void; label?:
 
 function BlockHead({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-end justify-between gap-3 px-1">
+    <div className="v-archive-block-head">
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold tracking-wide text-ink-900">{title}</h2>
-        {hint && <p className="mt-0.5 text-[11.5px] text-ink-500">{hint}</p>}
+        <h2>{title}</h2>
+        {hint && <p>{hint}</p>}
       </div>
       {action}
     </div>
@@ -164,7 +176,7 @@ function RowActions({ edit, kind, row }: { edit: EditCtx; kind: ArchiveKind; row
       <button
         type="button"
         onClick={() => edit.openEdit(kind, row)}
-        className="inline-flex items-center gap-1 rounded-full border border-cream-300 bg-white px-2.5 py-0.5 text-[11.5px] text-ink-700 transition hover:text-rose-deep"
+        className="v-archive-action"
       >
         <Pencil size={11} /> 编辑
       </button>
@@ -192,9 +204,9 @@ function Preferences({ edit }: { edit: EditCtx }) {
       {Object.entries(byCategory).map(([category, list]) => (
         <section key={category}>
           <BlockHead title={category} hint={`${list.length} 条`} />
-          <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+          <ul className="v-archive-list">
             {list.map((p, i) => (
-              <li key={p.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+              <li key={p.id} className={clsx('v-archive-row', i > 0 && 'is-divided')}>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-[13.5px] font-medium text-ink-900">{p.name}</span>
                   <Pill tone={p.direction === 'dislike' ? 'neutral' : 'rose'}>{DIRECTION_LABEL[p.direction]}</Pill>
@@ -225,7 +237,7 @@ function Preferences({ edit }: { edit: EditCtx }) {
                         <Link
                           key={id}
                           to={`/stories/${id}`}
-                          className="rounded-full border border-cream-300 bg-cream-50 px-2 py-0.5 text-[10.5px] text-ink-500 hover:bg-cream-100"
+                          className="v-archive-source-link"
                         >
                           {e.title}
                         </Link>
@@ -256,9 +268,9 @@ function Wishes({ edit }: { edit: EditCtx }) {
         {s.wishes.length === 0 ? (
           <EmptyState icon={<Sparkles size={20} />} title="还没有心愿" compact />
         ) : (
-          <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+          <ul className="v-archive-list">
             {s.wishes.map((w, i) => (
-              <li key={w.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+              <li key={w.id} className={clsx('v-archive-row', i > 0 && 'is-divided')}>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-[13px] leading-snug text-ink-900">{w.content}</span>
                   <Pill tone={w.status === 'wish' ? 'rose' : w.status === 'fulfilled' ? 'ok' : 'neutral'}>
@@ -287,9 +299,9 @@ function Wishes({ edit }: { edit: EditCtx }) {
         {s.gifts.length === 0 ? (
           <EmptyState icon={<Gift size={20} />} title="还没有礼物记录" compact />
         ) : (
-          <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+          <ul className="v-archive-list">
             {s.gifts.map((g, i) => (
-              <li key={g.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+              <li key={g.id} className={clsx('v-archive-row', i > 0 && 'is-divided')}>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-[13px] font-medium text-ink-900">{g.name}</span>
                   <span className="shrink-0 text-[11px] text-ink-300">{g.givenAt}</span>
@@ -316,9 +328,9 @@ function Health({ edit }: { edit: EditCtx }) {
     return <EmptyState icon={<Activity size={22} />} title="还没有健康记录" desc="只做记录与跟进，不用于推断疾病。" />
   }
   return (
-    <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+    <ul className="v-archive-list">
       {s.health.map((h, i) => (
-        <li key={h.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+        <li key={h.id} className={clsx('v-archive-row', i > 0 && 'is-divided')}>
           <div className="flex items-start justify-between gap-2">
             <span className="text-[13.5px] font-medium text-ink-900">{h.symptom}</span>
             <Pill tone={h.status === 'recovered' ? 'ok' : h.status === 'ongoing' ? 'warn' : 'neutral'}>
@@ -361,9 +373,9 @@ function Statuses({ edit }: { edit: EditCtx }) {
     )
   }
   return (
-    <ul className="overflow-hidden rounded-2xl border border-cream-200 bg-white shadow-card">
+    <ul className="v-archive-list">
       {rows.map((d, i) => (
-        <li key={d.id} className={clsx('px-4 py-3', i > 0 && 'border-t border-cream-200')}>
+        <li key={d.id} className={clsx('v-archive-row', i > 0 && 'is-divided')}>
           <div className="flex items-start justify-between gap-2">
             <span className="text-[13.5px] font-medium text-ink-900">{d.date}</span>
             {d.mood && (
@@ -395,7 +407,7 @@ function Portrait({ edit }: { edit: EditCtx }) {
   return (
     <div className="space-y-2.5">
       {s.insights.map((ins) => (
-        <article key={ins.id} className="rounded-2xl border border-cream-200 bg-white p-4 shadow-card">
+        <article key={ins.id} className="v-archive-card">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] tracking-wide text-ink-300">{ins.dimension}</span>
             <Pill tone={ins.confirmState === 'confirmed' ? 'ok' : ins.confirmState === 'pending' ? 'warn' : 'neutral'}>
@@ -415,7 +427,7 @@ function Portrait({ edit }: { edit: EditCtx }) {
                   <Link
                     key={id}
                     to={`/stories/${id}`}
-                    className="rounded-full border border-cream-300 bg-cream-50 px-2 py-0.5 text-[10.5px] text-ink-500 hover:bg-cream-100"
+                    className="v-archive-source-link"
                   >
                     {e.title}
                   </Link>
@@ -441,7 +453,7 @@ function Anniversaries({ edit }: { edit: EditCtx }) {
       {s.anniversaries.map((a) => {
         const u = upcoming.find((x) => x.item.id === a.id)
         return (
-          <li key={a.id} className="rounded-2xl border border-cream-200 bg-white p-4 shadow-card">
+          <li key={a.id} className="v-archive-card">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="text-[13.5px] font-medium text-ink-900">{a.name}</div>
@@ -483,7 +495,7 @@ function Reviews({ edit }: { edit: EditCtx }) {
   return (
     <div className="space-y-3">
       {s.summaries.map((m) => (
-        <article key={m.id} className="rounded-2xl border border-cream-200 bg-white p-4 shadow-card">
+        <article key={m.id} className="v-archive-card">
           <div className="flex items-start justify-between gap-2">
             <h3 className="text-[14px] font-semibold leading-snug text-ink-900">{m.title}</h3>
             <Pill tone={m.generator === 'ai' ? 'warn' : 'neutral'} className="shrink-0">

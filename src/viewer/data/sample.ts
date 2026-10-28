@@ -649,6 +649,18 @@ function buildBroken(): PublishedSnapshot {
   return { ...base, photos }
 }
 
+/** 互动关闭场景：验证访客只剩四项导航，首页也不出现互动推荐。 */
+function buildPlain(): PublishedSnapshot {
+  const base = buildDemo()
+  return {
+    ...base,
+    config: {
+      ...base.config,
+      sections: { ...base.config.sections, game: false },
+    },
+  }
+}
+
 /** 长文本场景：验证长称呼、长寄语及文字放大时的版式降级 */
 function buildLong(): PublishedSnapshot {
   const base = buildDemo()
@@ -730,7 +742,9 @@ export function getSnapshot(scene: SnapshotScene): PublishedSnapshot {
           ? buildBroken()
           : scene === 'long'
             ? buildLong()
-            : buildDemo()
+            : scene === 'plain'
+              ? buildPlain()
+              : buildDemo()
   CACHE.set(scene, built)
   return built
 }

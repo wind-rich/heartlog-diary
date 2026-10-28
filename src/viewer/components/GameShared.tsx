@@ -8,16 +8,17 @@ import { Lightbox } from './Photos'
 
 export function GameHeader({ title, description, aside }: { title: string; description: string; aside?: ReactNode }) {
   return (
-    <header className="px-1">
-      <Link to="/game" className="inline-flex min-h-11 items-center gap-1.5 text-[12px] text-ink-500 hover:text-rose-deep">
+    <header className="v-game-header">
+      <Link to="/game" className="v-game-back">
         <ArrowLeft size={14} /> 返回互动大厅
       </Link>
-      <div className="mt-1 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[19px] font-semibold text-ink-900">{title}</h1>
-          <p className="mt-1 max-w-[540px] text-[12px] leading-relaxed text-ink-500">{description}</p>
+      <div className="v-game-heading-row">
+        <div className="v-game-heading">
+          <div className="v-eyebrow">MEMORY PLAYGROUND</div>
+          <h1>{title}</h1>
+          <p>{description}</p>
         </div>
-        {aside}
+        {aside && <div className="v-game-header-aside">{aside}</div>}
       </div>
     </header>
   )
@@ -95,9 +96,9 @@ export function useGameTimer(active: boolean, resetKey: string | number): number
 
 export function GameResult({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-[#CFE0C6] bg-[#F2F7EF] px-4 py-4 text-center" aria-live="polite">
-      <h2 className="text-[15px] font-medium text-[#3F5F3A]">{title}</h2>
-      <div className="mt-1 text-[12px] leading-relaxed text-[#4F6B45]">{children}</div>
+    <section className="v-game-result" aria-live="polite">
+      <h2>{title}</h2>
+      <div>{children}</div>
     </section>
   )
 }

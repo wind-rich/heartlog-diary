@@ -14,7 +14,9 @@ import { readFileSync, writeFileSync, renameSync, rmSync, existsSync, readdirSyn
 import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const OUT = join(ROOT, 'dist-viewer')
+const OUT = process.env.HL_VIEWER_OUT
+  ? resolve(ROOT, process.env.HL_VIEWER_OUT)
+  : join(ROOT, 'dist-viewer')
 
 function walk(dir, base = '') {
   const out = []

@@ -15,7 +15,7 @@ import GamePage from './pages/Game'
 
 function readScene(): SnapshotScene {
   const raw = new URLSearchParams(window.location.search).get('scene')
-  return raw === 'empty' || raw === 'stress' || raw === 'broken' || raw === 'long' ? raw : 'demo'
+  return raw === 'empty' || raw === 'stress' || raw === 'broken' || raw === 'long' || raw === 'plain' ? raw : 'demo'
 }
 
 /**
