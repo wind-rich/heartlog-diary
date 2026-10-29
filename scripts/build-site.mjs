@@ -117,6 +117,15 @@ const AUTHOR_DIR = join(OUT, 'a')
 mkdirSync(VIEW_DIR, { recursive: true })
 mkdirSync(AUTHOR_DIR, { recursive: true })
 
+// 浏览器取 manifest 与清单里的图标时**不带 cookie**（Chrome 实测请求头里没有 Cookie），
+// 而站点门禁只认 __wb_rsc cookie，会直接回 403 HTML，Chrome 就判定「无法安装此应用」。
+// 把分享码带进这些 URL 才能装上：分享码只来自环境变量，不写进仓库。
+const SHARECODE = process.env.HL_SHARECODE || ''
+const SHARE_Q = SHARECODE ? `?sharecode=${encodeURIComponent(SHARECODE)}` : ''
+if (!SHARECODE) {
+  console.warn('⚠ 未设置 HL_SHARECODE：清单与图标 URL 不带分享码，浏览器会因 403 判定「无法安装此应用」')
+}
+
 /** 子目录页面把 "./x" 改成 "../x"，随后单独把 manifest 链接指回本地 */
 const rebase = (s) => s.replace(/(["'])\.\//g, '$1../')
 
@@ -126,7 +135,8 @@ function appManifest({ name, short, theme, background, description }) {
       name,
       short_name: short,
       id: './',
-      start_url: './',
+      // start_url 也带分享码：图标启动时即使 cookie 过期也能直接通过门禁
+      start_url: `./${SHARE_Q}`,
       scope: './',
       display: 'standalone',
       orientation: 'portrait',
@@ -135,10 +145,10 @@ function appManifest({ name, short, theme, background, description }) {
       lang: 'zh-CN',
       description,
       icons: [
-        { src: '../icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-        { src: '../icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: '../icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: '../icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        { src: `../icons/icon.svg${SHARE_Q}`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+        { src: `../icons/icon-192.png${SHARE_Q}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: `../icons/icon-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: `../icons/icon-maskable-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       ],
     },
     null,
@@ -148,7 +158,9 @@ function appManifest({ name, short, theme, background, description }) {
 
 writeFileSync(
   join(VIEW_DIR, 'index.html'),
-  rebase(readFileSync(join(OUT, 'index.html'), 'utf8')).replace('"../manifest.webmanifest"', '"./manifest.webmanifest"'),
+  rebase(readFileSync(join(OUT, 'index.html'), 'utf8'))
+    .replace('"../manifest.webmanifest"', `"./manifest.webmanifest${SHARE_Q}"`)
+    .replace('"../icons/icon-192.png"', `"../icons/icon-192.png${SHARE_Q}"`),
 )
 writeFileSync(
   join(VIEW_DIR, 'manifest.webmanifest'),
@@ -163,7 +175,9 @@ writeFileSync(
 
 writeFileSync(
   join(AUTHOR_DIR, 'index.html'),
-  rebase(readFileSync(join(OUT, 'author.html'), 'utf8')).replace('"../author.webmanifest"', '"./manifest.webmanifest"'),
+  rebase(readFileSync(join(OUT, 'author.html'), 'utf8'))
+    .replace('"../author.webmanifest"', `"./manifest.webmanifest${SHARE_Q}"`)
+    .replace('"../icons/icon-192.png"', `"../icons/icon-192.png${SHARE_Q}"`),
 )
 writeFileSync(
   join(AUTHOR_DIR, 'manifest.webmanifest'),
@@ -179,6 +193,8 @@ writeFileSync(
 for (const dir of [VIEW_DIR, AUTHOR_DIR]) copyFileSync(join(OUT, 'sw.js'), join(dir, 'sw.js'))
 
 function redirectPage(to, label) {
+  // 没带查询串时补上分享码，避免首次访问或 cookie 过期后落到 403
+  const fallback = SHARE_Q ? `"${SHARE_Q}"` : "''"
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -186,10 +202,10 @@ function redirectPage(to, label) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="robots" content="noindex" />
     <title>${label}</title>
-    <script>location.replace(${JSON.stringify(to)} + location.search + location.hash)</script>
-    <noscript><meta http-equiv="refresh" content="0;url=${to}" /></noscript>
+    <script>location.replace(${JSON.stringify(to)} + (location.search || ${fallback}) + location.hash)</script>
+    <noscript><meta http-equiv="refresh" content="0;url=${to}${SHARE_Q}" /></noscript>
   </head>
-  <body><p><a href="${to}">${label}</a></p></body>
+  <body><p><a href="${to}${SHARE_Q}">${label}</a></p></body>
 </html>
 `
 }
