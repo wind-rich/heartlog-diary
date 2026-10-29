@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, Info, Star, X } from 'lucide-react'
 import clsx from 'clsx'
 import { ensurePhotoUrl } from '../lib/photo'
@@ -133,7 +134,14 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
   if (!open) return null
 
-  return (
+  /**
+   * 挂到 body 再渲染。
+   *
+   * 直接内联渲染时，弹层会被页面容器的 transform / isolation 困在局部层叠上下文里，
+   * 于是 z-[70] 只在自己那一层生效，底部导航（z-40，在根层叠上下文）反而盖在上面，
+   * 表现为手机端弹层底部连同「保存」按钮一起被导航栏切掉。
+   */
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex sm:items-center sm:justify-center items-end justify-center">
       <div className="absolute inset-0 bg-[#4A3B31]/40 backdrop-blur-[2px]" onClick={onClose} />
       <div
@@ -164,7 +172,8 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
         <div className="flex-1 overflow-y-auto px-4 py-4">{children}</div>
         {footer && <div className="v-modal-foot px-4 py-3">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

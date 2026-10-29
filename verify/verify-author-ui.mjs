@@ -147,6 +147,40 @@ try {
   notes.push(`首页：编辑模式=${home.editableBadge}，节点 ${home.nodes}，图片 ${home.imageCount}，底栏 ${home.nav.join('/')}，顶栏设置=${home.settingsTop}`)
   await cdp.shot('04-author-home.png')
 
+  /* 2b. 人物资料弹层：底部「保存」必须可点（曾被底部导航盖住） */
+  await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find((el) => (el.textContent || '').includes('编辑人物资料'))
+    if (btn) btn.click()
+    return !!btn
+  })()`)
+  await sleep(900)
+  const editorPanel = await cdp.evaluate(`(() => {
+    const save = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '保存')
+    if (!save) return { found: false }
+    const r = save.getBoundingClientRect()
+    const nav = document.querySelector('nav[aria-label="手机主导航"]')
+    const navTop = nav ? nav.getBoundingClientRect().top : innerHeight
+    return {
+      found: true,
+      bottom: Math.round(r.bottom),
+      vh: innerHeight,
+      navTop: Math.round(navTop),
+      inViewport: r.top >= 0 && r.bottom <= innerHeight + 1,
+      hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.textContent?.includes('保存') ?? false,
+    }
+  })()`)
+  if (!editorPanel.found) problems.push('人物资料弹层里找不到「保存」按钮')
+  else if (!editorPanel.inViewport) problems.push(`「保存」按钮超出可视区：bottom=${editorPanel.bottom} / vh=${editorPanel.vh}`)
+  else if (!editorPanel.hit) problems.push('「保存」按钮被其他元素遮住，点不到')
+  notes.push(`人物资料弹层：保存按钮 bottom=${editorPanel.bottom}/${editorPanel.vh}，导航顶=${editorPanel.navTop}，可点=${editorPanel.hit}`)
+  await cdp.shot('04b-person-editor.png')
+  await cdp.evaluate(`(() => {
+    const close = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === '关闭')
+    if (close) close.click()
+    return true
+  })()`)
+  await sleep(600)
+
   /* 3. 故事页新增一条记录 */
   await cdp.send('Page.navigate', { url: `${BASE}/#/stories` })
   await sleep(2000)
