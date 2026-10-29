@@ -361,6 +361,16 @@ export async function putPhoto(photo: Photo): Promise<Photo> {
   return photo
 }
 
+/** 只改题注：不动图片数据，清空即视为「没有题注」 */
+export async function updatePhotoCaption(id: string, caption: string): Promise<Photo | undefined> {
+  const photo = await db.photos.get(id)
+  if (!photo) return undefined
+  const text = caption.trim()
+  const next: Photo = { ...photo, caption: text || undefined }
+  await db.photos.put(next)
+  return next
+}
+
 export async function deletePhotoCascade(id: string): Promise<void> {
   const photo = await db.photos.get(id)
   if (!photo) return

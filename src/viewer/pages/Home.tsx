@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
 import { useAuthorReload } from '../author/AuthorReload'
-import { PersonEditor, TaskSummaryCard } from '../author/lazy'
+import { PersonEditor, PhotoCaptionButton, TaskSummaryCard } from '../author/lazy'
 import {
   avatarUrlFor,
   DIRECTION_LABEL,
@@ -258,7 +258,23 @@ export default function Home() {
       )}
 
       {box !== null && featured[box] && (
-        <Lightbox photos={featured} index={box} onIndexChange={setBox} onClose={() => setBox(null)} />
+        <Lightbox
+          photos={featured}
+          index={box}
+          onIndexChange={setBox}
+          onClose={() => setBox(null)}
+          renderCaption={
+            editable && reload
+              ? (photo) => (
+                  <div className="mt-2">
+                    <Suspense fallback={null}>
+                      <PhotoCaptionButton photoId={photo.id} caption={photo.caption} onSaved={() => void reload()} />
+                    </Suspense>
+                  </div>
+                )
+              : undefined
+          }
+        />
       )}
     </div>
   )

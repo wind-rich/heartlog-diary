@@ -74,9 +74,11 @@ interface LightboxProps {
   renderDelete?: () => ReactNode
   /** 当前照片上的额外动作（如寻宝确认）；由调用方按 photo 渲染 */
   renderAction?: (photo: PublicPhoto) => ReactNode
+  /** 作者端才有：写/改题注的入口（渲染插槽，访客端不传） */
+  renderCaption?: (photo: PublicPhoto) => ReactNode
 }
 
-export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, renderDelete, renderAction }: LightboxProps) {
+export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, renderDelete, renderAction, renderCaption }: LightboxProps) {
   const photo = photos[index]
   const touchX = useRef<number | null>(null)
   // 云端模式没带图地址，按需取一次大图；静态模式直接返回原地址
@@ -184,6 +186,7 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-[13px] leading-relaxed">{photo.caption || '未填写说明'}</div>
+        {renderCaption?.(photo)}
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#F3E4D8]/60">
           <span>{photoDateText(photo)}</span>
           {photo.tags.map((t) => (

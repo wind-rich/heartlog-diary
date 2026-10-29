@@ -13,6 +13,7 @@ export const PersonEditor = lazy(() => import('./editors').then((m) => ({ defaul
 export const DeleteEntryButton = lazy(() => import('./editors').then((m) => ({ default: m.DeleteEntryButton })))
 export const PhotoUploadButton = lazy(() => import('./editors').then((m) => ({ default: m.PhotoUploadButton })))
 export const DeletePhotoButton = lazy(() => import('./editors').then((m) => ({ default: m.DeletePhotoButton })))
+export const PhotoCaptionButton = lazy(() => import('./editors').then((m) => ({ default: m.PhotoCaptionButton })))
 
 /* 档案页（偏好 / 心愿 / 礼物 / 健康 / 画像 / 纪念日 / 回顾）的编辑器 */
 export const ArchiveItemEditor = lazy(() => import('./archiveEditors').then((m) => ({ default: m.ArchiveItemEditor })))

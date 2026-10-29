@@ -3,9 +3,9 @@
  * 只做展示端界面里的编辑入口，界面风格沿用浏览态（暖色卡片 + 同一套间距）。
  */
 import { useEffect, useState } from 'react'
-import { Trash2, Upload } from 'lucide-react'
+import { Pencil, Trash2, Upload } from 'lucide-react'
 import { Modal, useToast, useConfirm } from '../../components/ui'
-import { db, deletePhotoCascade, entryRepo, savePerson, nowISO } from '../../db/db'
+import { db, deletePhotoCascade, entryRepo, savePerson, nowISO, updatePhotoCaption } from '../../db/db'
 import { addPhotoFiles } from '../../lib/photo'
 import { useApp } from '../../state/app'
 import type { Entry, EntryType, Mood, Photo } from '../../db/types'
@@ -408,6 +408,89 @@ export function DeletePhotoButton({
     >
       <Trash2 size={11} /> {label}
     </button>
+  )
+}
+
+export function PhotoCaptionButton({
+  photoId,
+  caption,
+  onSaved,
+}: {
+  photoId: string
+  caption?: string
+  onSaved: () => void
+}) {
+  const toast = useToast()
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(caption ?? '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (open) setDraft(caption ?? '')
+  }, [open, caption])
+
+  async function save() {
+    setSaving(true)
+    try {
+      await updatePhotoCaption(photoId, draft)
+      toast(draft.trim() ? '题注已保存' : '题注已清空')
+      setOpen(false)
+      onSaved()
+    } catch (err) {
+      toast(`保存失败：${(err as Error).message}`, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(true)
+        }}
+        className="inline-flex items-center gap-1 rounded-full border border-white/25 px-2 py-0.5 text-[11px] text-[#F3E4D8]/85 transition hover:bg-white/10"
+      >
+        <Pencil size={11} /> {caption?.trim() ? '改题注' : '写题注'}
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-full" onClick={(e) => e.stopPropagation()}>
+      <textarea
+        autoFocus
+        rows={2}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="写一句这张照片的说明，会显示在首页和相册"
+        className="w-full resize-y rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-[12.5px] leading-relaxed text-[#F3E4D8] outline-none placeholder:text-[#F3E4D8]/40 focus:border-white/50"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => void save()}
+          className="rounded-full bg-white px-3 py-1 text-[12px] font-medium text-[#2A1F26] disabled:opacity-60"
+        >
+          {saving ? '保存中…' : '保存题注'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-full border border-white/25 px-3 py-1 text-[12px] text-[#F3E4D8]/85"
+        >
+          取消
+        </button>
+        {caption?.trim() && (
+          <button type="button" onClick={() => setDraft('')} className="text-[11px] text-[#F3E4D8]/60 underline">
+            清空
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 

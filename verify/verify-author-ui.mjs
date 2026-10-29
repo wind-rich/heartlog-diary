@@ -247,6 +247,48 @@ try {
   if (!albumBefore.hasUpload) problems.push('相册缺少上传入口')
   await cdp.shot('09-album-delete-buttons.png')
 
+  /* 4.4 相册大图写题注：作者必须能填，且保存后重新打开仍在 */
+  await cdp.evaluate(`(() => { document.querySelector('.v-album-tile')?.click(); return true })()`)
+  await sleep(1200)
+  const captionEntry = await cdp.evaluate(`(() => {
+    const t = document.body.innerText
+    return { lightbox: !!document.querySelector('[aria-label="照片大图"]'), entry: t.includes('写题注') || t.includes('改题注') }
+  })()`)
+  if (!captionEntry.lightbox) problems.push('点相册照片没有打开大图')
+  if (!captionEntry.entry) problems.push('大图里没有「写题注」入口')
+  await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => /写题注|改题注/.test(b.textContent || ''))
+    btn?.click(); return !!btn
+  })()`)
+  await sleep(500)
+  const typed = await cdp.evaluate(`(() => {
+    const ta = document.querySelector('textarea')
+    if (!ta) return false
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+    setter.call(ta, '自动化题注：夜色里的一杯')
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+  if (!typed) problems.push('题注输入框没有出现')
+  await cdp.shot('09b-photo-caption-form.png')
+  await cdp.evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存题注')
+    btn?.click(); return !!btn
+  })()`)
+  await sleep(1800)
+  const savedText = await cdp.evaluate(`(() => document.body.innerText.includes('自动化题注：夜色里的一杯'))()`)
+  await cdp.evaluate(`(() => { document.querySelector('[aria-label="关闭"]')?.click(); return true })()`)
+  await sleep(900)
+  await cdp.evaluate(`(() => { document.querySelector('.v-album-tile')?.click(); return true })()`)
+  await sleep(1200)
+  const captionKept = await cdp.evaluate(`(() => document.body.innerText.includes('自动化题注：夜色里的一杯'))()`)
+  if (!savedText) problems.push('保存题注后大图里没有显示新题注')
+  if (!captionKept) problems.push('重新打开大图后题注丢失（未落库）')
+  notes.push(`相册题注：入口=${captionEntry.entry}，保存后可见=${savedText}，重开仍在=${captionKept}`)
+  await cdp.shot('09c-photo-caption-saved.png')
+  await cdp.evaluate(`(() => { document.querySelector('[aria-label="关闭"]')?.click(); return true })()`)
+  await sleep(600)
+
   await cdp.evaluate(`(() => { document.querySelector('button[aria-label="删除这张照片"]').click(); return true })()`)
   await sleep(600)
   const dialogText = await cdp.evaluate(`(() => {

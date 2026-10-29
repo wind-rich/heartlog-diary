@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Images } from 'lucide-react'
 import { useSnapshot, useSnapshotState } from '../state/SnapshotContext'
 import { useAuthorReload } from '../author/AuthorReload'
-import { DeletePhotoButton, PhotoUploadButton } from '../author/lazy'
+import { DeletePhotoButton, PhotoCaptionButton, PhotoUploadButton } from '../author/lazy'
 import { photosDesc } from '../lib/data'
 import { PhotoTile, Lightbox } from '../components/Photos'
 import { TreasureTargetAction } from '../components/TreasureTargetAction'
@@ -158,6 +158,17 @@ export default function Album() {
             nav(`/stories/${id}`)
           }}
           renderAction={(photo) => <TreasureTargetAction targetType="photo" targetId={photo.id} />}
+          renderCaption={
+            editable && reload
+              ? (photo) => (
+                  <div className="mt-2">
+                    <Suspense fallback={null}>
+                      <PhotoCaptionButton photoId={photo.id} caption={photo.caption} onSaved={() => void reload()} />
+                    </Suspense>
+                  </div>
+                )
+              : undefined
+          }
           renderDelete={
             editable && reload
               ? () => (
