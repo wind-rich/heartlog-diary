@@ -129,15 +129,17 @@ if (!SHARECODE) {
 /** 子目录页面把 "./x" 改成 "../x"，随后单独把 manifest 链接指回本地 */
 const rebase = (s) => s.replace(/(["'])\.\//g, '$1../')
 
-function appManifest({ name, short, theme, background, description }) {
+function appManifest({ base, name, short, theme, background, description }) {
+  // 用绝对路径写 id/scope/start_url：两份清单如果用同样的 "./"，身份取决于解析基址，
+  // Chrome 实测会把两个入口当成同一个应用（装了一个，另一个就显示「已安装此应用」）。
+  // 绝对且不同的 id 才能让系统认成两个独立应用。
   return `${JSON.stringify(
     {
       name,
       short_name: short,
-      id: './',
-      // start_url 也带分享码：图标启动时即使 cookie 过期也能直接通过门禁
-      start_url: `./${SHARE_Q}`,
-      scope: './',
+      id: base,
+      start_url: `${base}${SHARE_Q}`,
+      scope: base,
       display: 'standalone',
       orientation: 'portrait',
       background_color: background,
@@ -145,10 +147,10 @@ function appManifest({ name, short, theme, background, description }) {
       lang: 'zh-CN',
       description,
       icons: [
-        { src: `../icons/icon.svg${SHARE_Q}`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-        { src: `../icons/icon-192.png${SHARE_Q}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: `../icons/icon-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: `../icons/icon-maskable-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        { src: `/icons/icon.svg${SHARE_Q}`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+        { src: `/icons/icon-192.png${SHARE_Q}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: `/icons/icon-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: `/icons/icon-maskable-512.png${SHARE_Q}`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       ],
     },
     null,
@@ -165,6 +167,7 @@ writeFileSync(
 writeFileSync(
   join(VIEW_DIR, 'manifest.webmanifest'),
   appManifest({
+    base: '/v/',
     name: '心意簿 · 专属展示',
     short: '心意簿',
     theme: '#1A1220',
@@ -182,6 +185,7 @@ writeFileSync(
 writeFileSync(
   join(AUTHOR_DIR, 'manifest.webmanifest'),
   appManifest({
+    base: '/a/',
     name: '心意簿 · 作者端',
     short: '心意簿作者',
     theme: '#FFFCF8',
