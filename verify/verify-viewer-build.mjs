@@ -27,8 +27,8 @@ const LIVE = process.env.HL_LIVE_URL || ''
 const EXPECT = process.env.HL_EXPECT === 'real' ? 'real' : 'sample'
 const CDP_PORT = 9413
 
-if (!LIVE && !existsSync(join(SITE, 'index.html'))) {
-  console.error(`✗ 找不到 ${process.env.HL_VIEWER_DIR || 'dist-viewer'}/index.html，请先准备候选产物`)
+if (!LIVE && !existsSync(join(SITE, 'v/index.html'))) {
+  console.error(`✗ 找不到 ${process.env.HL_VIEWER_DIR || 'dist-viewer'}/v/index.html，请先准备候选产物`)
   process.exit(1)
 }
 mkdirSync(OUT, { recursive: true })
@@ -47,8 +47,11 @@ const MIME = {
 // 极简静态服务器：只做文件映射，不给 SPA 回退（hash 路由本来也不需要）
 const server = createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0])
-  const rel = url === '/' ? 'index.html' : normalize(url).replace(/^([/\\])+/, '')
-  const file = join(SITE, rel)
+  let rel = url === '/' ? 'index.html' : normalize(url).replace(/^([/\\])+/, '')
+  if (rel === '' || rel.endsWith('/') || rel.endsWith('\\')) rel = `${rel}index.html`
+  let file = join(SITE, rel)
+  // /v、/v/ 这类目录入口解析到目录下的 index.html
+  if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html')
   if (!file.startsWith(SITE) || !existsSync(file) || statSync(file).isDirectory()) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
     res.end('404')
@@ -129,15 +132,18 @@ let ws
 
 let serverStarted = false
 try {
+  // 访客端现在位于 /v/（根路径只是保留查询串的跳转页），入口基准指向它
   let BASE
   if (LIVE) {
-    BASE = LIVE
-    console.log(`模式：校验线上地址 ${LIVE}`)
+    const u = new URL(LIVE)
+    u.pathname = u.pathname.replace(/\/+$/, '') + '/v/'
+    BASE = u.toString()
+    console.log(`模式：校验线上地址 ${LIVE}（访客端 ${BASE}）`)
   } else {
     await new Promise((res) => server.listen(HTTP_PORT, '127.0.0.1', res))
     serverStarted = true
-    BASE = `http://127.0.0.1:${HTTP_PORT}`
-    console.log(`模式：校验本地 ${process.env.HL_VIEWER_DIR || 'dist-viewer/'}`)
+    BASE = `http://127.0.0.1:${HTTP_PORT}/v/`
+    console.log(`模式：校验本地 ${process.env.HL_VIEWER_DIR || 'dist-viewer/'}（访客端 /v/）`)
   }
 
   // 统一 URL：ROOT 保留 ?sharecode= 之类的查询串，assetBase 只保留目录部分
@@ -145,7 +151,7 @@ try {
   const ROOT = BASE.replace(/\/+$/, '')
   // 合成构建默认仍会先尝试云端；校验示例产物时必须显式固定来源。
   const HOME = EXPECT === 'sample' && !LIVE ? `${ROOT}/?source=sample` : ROOT
-  const assetBase = `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}/`
+  const assetBase = `${parsed.origin}${parsed.pathname}`
 
   // 1. 入口与静态资源可达性（先不依赖浏览器）
   const indexRes = await fetch(ROOT)

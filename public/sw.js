@@ -1,10 +1,18 @@
 /* 心意簿 Service Worker —— 静态资源离线缓存（HTML 走网络优先，保证更新可用） */
-const CACHE = 'heartlog-v3'
-const PRECACHE = ['./', './index.html', './author.html', './manifest.webmanifest', './author.webmanifest', './icons/icon.svg']
+// 两个入口各有自己的 worker（/v/sw.js、/a/sw.js），scope 不同，缓存必须分开：
+// 同源下 CacheStorage 是共享的，用同一名字会让作者端与访客端互相覆盖。
+const SCOPE_PATH = new URL(self.registration.scope).pathname
+const CACHE = `heartlog-v4${SCOPE_PATH.replace(/\//g, '-').replace(/-$/, '')}`
+const HOME_URL = new URL('./index.html', self.registration.scope).href
+const PRECACHE = ['./', './index.html', './manifest.webmanifest', '../icons/icon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(PRECACHE).catch(() => undefined)).then(() => self.skipWaiting()),
+    caches
+      .open(CACHE)
+      // 逐条写入：addAll 是原子的，缺一个（比如没网或某个文件 403）会导致整批都不缓存
+      .then((cache) => Promise.allSettled(PRECACHE.map((url) => cache.add(url))))
+      .then(() => self.skipWaiting()),
   )
 })
 
@@ -47,18 +55,15 @@ self.addEventListener('fetch', (event) => {
 
   // 页面导航：网络优先，离线回落到缓存
   if (req.mode === 'navigate') {
-    // 两个入口共用一个 worker，缓存键必须按路径区分：
-    // 早期实现把所有导航响存成 './index.html'，打开作者端会覆盖访客首屏，离线时看到错页。
-    const isAuthor = new URL(req.url).pathname.endsWith('author.html')
-    const key = isAuthor ? './author.html' : './index.html'
+    // 每个入口有自己的 worker 与 scope，首屏键固定为该 scope 下的 index.html
     event.respondWith(
       fetch(req)
         .then((res) => {
           const copy = res.clone()
-          caches.open(CACHE).then((c) => c.put(key, copy)).catch(() => undefined)
+          caches.open(CACHE).then((c) => c.put(HOME_URL, copy)).catch(() => undefined)
           return res
         })
-        .catch(() => caches.match(key).then((r) => r || Response.error())),
+        .catch(() => caches.match(HOME_URL).then((r) => r || Response.error())),
     )
     return
   }

@@ -107,6 +107,104 @@ for (const banned of ['apiKey', 'proxyUrl', 'publishToken']) {
   }
 }
 
+// ── 拆成两个互不嵌套的作用域 ────────────────────────────────────────────────
+// 浏览器限制：两个 PWA 的 scope 若一个包含另一个，外层装好后内层不再有安装入口
+//（web.dev 的 multiple-pwas-same-domain）。所以访客端放 /v/、作者端放 /a/，
+// 各自 scope "./"；根 index.html 与旧 author.html 只做跳转，且必须保留 ?sharecode=
+// ——首次访问靠它换 __wb_rsc cookie，丢了会落到 403。
+const VIEW_DIR = join(OUT, 'v')
+const AUTHOR_DIR = join(OUT, 'a')
+mkdirSync(VIEW_DIR, { recursive: true })
+mkdirSync(AUTHOR_DIR, { recursive: true })
+
+/** 子目录页面把 "./x" 改成 "../x"，随后单独把 manifest 链接指回本地 */
+const rebase = (s) => s.replace(/(["'])\.\//g, '$1../')
+
+function appManifest({ name, short, theme, background, description }) {
+  return `${JSON.stringify(
+    {
+      name,
+      short_name: short,
+      id: './',
+      start_url: './',
+      scope: './',
+      display: 'standalone',
+      orientation: 'portrait',
+      background_color: background,
+      theme_color: theme,
+      lang: 'zh-CN',
+      description,
+      icons: [
+        { src: '../icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+        { src: '../icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '../icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: '../icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    },
+    null,
+    2,
+  )}\n`
+}
+
+writeFileSync(
+  join(VIEW_DIR, 'index.html'),
+  rebase(readFileSync(join(OUT, 'index.html'), 'utf8')).replace('"../manifest.webmanifest"', '"./manifest.webmanifest"'),
+)
+writeFileSync(
+  join(VIEW_DIR, 'manifest.webmanifest'),
+  appManifest({
+    name: '心意簿 · 专属展示',
+    short: '心意簿',
+    theme: '#1A1220',
+    background: '#FFFCF8',
+    description: '围绕他展开的专属展示：纪念数字、照片、故事与互动。',
+  }),
+)
+
+writeFileSync(
+  join(AUTHOR_DIR, 'index.html'),
+  rebase(readFileSync(join(OUT, 'author.html'), 'utf8')).replace('"../author.webmanifest"', '"./manifest.webmanifest"'),
+)
+writeFileSync(
+  join(AUTHOR_DIR, 'manifest.webmanifest'),
+  appManifest({
+    name: '心意簿 · 作者端',
+    short: '心意簿作者',
+    theme: '#FFFCF8',
+    background: '#FFF6EE',
+    description: '心意簿作者端：记录、同步与发布。',
+  }),
+)
+
+for (const dir of [VIEW_DIR, AUTHOR_DIR]) copyFileSync(join(OUT, 'sw.js'), join(dir, 'sw.js'))
+
+function redirectPage(to, label) {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>${label}</title>
+    <script>location.replace(${JSON.stringify(to)} + location.search + location.hash)</script>
+    <noscript><meta http-equiv="refresh" content="0;url=${to}" /></noscript>
+  </head>
+  <body><p><a href="${to}">${label}</a></p></body>
+</html>
+`
+}
+writeFileSync(join(OUT, 'index.html'), redirectPage('./v/', '心意簿 · 专属展示'))
+writeFileSync(join(OUT, 'author.html'), redirectPage('./a/', '心意簿 · 作者端'))
+
+// 根目录不再使用清单，避免与 /v/、/a/ 的清单混淆
+for (const stale of ['manifest.webmanifest', 'author.webmanifest']) {
+  try {
+    rmSync(join(OUT, stale))
+  } catch {
+    // 删不掉也不影响：两个入口只认自己目录下的清单
+  }
+}
+
 // 清理上一版遗留的 hash 资源。
 // 注意：不能只保留 HTML 里引用的文件——懒加载 chunk（如 editors-*.js）不出现在 HTML 中，
 // 之前这样清理把编辑组件删掉，导致点编辑时动态 import 404、整页白屏。这里以构建清单为准。
@@ -151,7 +249,7 @@ const viewerJs = (html.match(/assets\/(viewer-[^"]+\.js)/) || [])[1]
 const authorJs = (authorHtml.match(/assets\/(author-[^"]+\.js)/) || [])[1]
 
 console.log(`✓ 发布产物就绪：${files.length} 个文件 / ${(total / 1024 / 1024).toFixed(1)} MB`)
-console.log(`  访客端  index.html → ${viewerJs || '(缺失)'}`)
-console.log(`  作者端  author.html → ${authorJs || '(缺失)'}`)
+console.log(`  访客端  /v/ → ${viewerJs || '(缺失)'}（根 / 与 ?sharecode 保留在跳转里）`)
+console.log(`  作者端  /a/ → ${authorJs || '(缺失)'}（旧 /author.html 跳转到 /a/）`)
 console.log(`  快照    ${manifest.publishId} · ${manifest.counts.entries} 条记录 / ${manifest.counts.photos} 张照片 · ${copied} 份媒体`)
 console.log(`  资源    清单内 ${keep.size} 个文件全部保留（含懒加载 chunk）`)

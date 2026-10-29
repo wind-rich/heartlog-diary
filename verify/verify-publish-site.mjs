@@ -23,22 +23,26 @@ const LIVE = process.env.HL_LIVE_URL || ''
 const HTTP_PORT = 5293
 const CDP_PORT = 9417
 
-if (!LIVE && (!existsSync(join(SITE, 'index.html')) || !existsSync(join(SITE, 'author.html')))) {
-  console.error('✗ 缺少 dist-viewer/index.html 或 author.html，请先 npm run build:site')
+if (!LIVE && (!existsSync(join(SITE, 'v/index.html')) || !existsSync(join(SITE, 'a/index.html')))) {
+  console.error('✗ 缺少 dist-viewer/v/index.html 或 a/index.html，请先 npm run build:site')
   process.exit(1)
 }
 mkdirSync(OUT, { recursive: true })
 
 const manifest = JSON.parse(readFileSync(join(SITE, 'snapshot/public-snapshot.json'), 'utf8')).manifest
-const VIEWER_URL = LIVE || ''
-const AUTHOR_URL = LIVE ? LIVE.replace('/?', '/author.html?') : ''
+const VIEWER_URL = LIVE ? LIVE.replace('/?', '/v/?') : ''
+const AUTHOR_URL = LIVE ? LIVE.replace('/?', '/a/?') : ''
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json' }
 
 const server = createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0])
-  const rel = url === '/' ? 'index.html' : normalize(url).replace(/^([/\\])+/, '')
-  const file = join(SITE, rel)
+  let rel = url === '/' ? 'index.html' : normalize(url).replace(/^([/\\])+/, '')
+  // 两个入口是目录（/v/、/a/），按目录首页解析
+  if (rel === '' || rel.endsWith('/') || rel.endsWith('\\')) rel = `${rel}index.html`
+  let file = join(SITE, rel)
+  // /v、/v/ 这类目录入口解析到目录下的 index.html
+  if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html')
   if (!file.startsWith(SITE) || !existsSync(file) || statSync(file).isDirectory()) {
     res.writeHead(404, { 'content-type': 'text/plain' })
     res.end('404')
@@ -113,6 +117,11 @@ function filesToCheck(site) {
   for (const name of readdirSync(site)) {
     if (name.endsWith('.html')) scan(readFileSync(join(site, name), 'utf8'))
   }
+  // 两个入口在子目录里
+  for (const dir of ['v', 'a']) {
+    const p = join(site, dir, 'index.html')
+    if (existsSync(p)) scan(readFileSync(p, 'utf8'))
+  }
   const assetsDir = join(site, 'assets')
   if (existsSync(assetsDir)) {
     for (const name of readdirSync(assetsDir)) {
@@ -136,8 +145,8 @@ try {
     started = true
     BASE = `http://127.0.0.1:${HTTP_PORT}`
   }
-  const viewerEntry = LIVE ? VIEWER_URL : `${BASE}/`
-  const authorEntry = LIVE ? AUTHOR_URL : `${BASE}/author.html`
+  const viewerEntry = LIVE ? VIEWER_URL : `${BASE}/v/`
+  const authorEntry = LIVE ? AUTHOR_URL : `${BASE}/a/`
 
   chrome = spawn(
     chromePath(),
