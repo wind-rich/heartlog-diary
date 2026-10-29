@@ -131,11 +131,11 @@ export function UniverseMap({ name, avatarUrl, archiveHref, tagline, nodes, onSe
                 }}
               >
                 <Icon size={19} strokeWidth={1.7} style={{ color: node.accent }} />
-                <span className="mt-0.5 text-[9px] leading-none text-[#F2D9C9]/75">
+                <span className="mt-0.5 text-[10.5px] leading-none text-[#F2D9C9]/85">
                   {node.count === null ? '暂无' : node.count}
                 </span>
               </span>
-              <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap text-[10.5px] font-medium text-[#F6E4D6] sm:text-[11px]">
+              <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium text-[#F6E4D6] [text-shadow:0_1px_3px_rgba(18,10,16,0.85)] sm:text-[11.5px]">
                 {node.label}
               </span>
             </button>
