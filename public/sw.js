@@ -1,6 +1,6 @@
 /* 心意簿 Service Worker —— 静态资源离线缓存（HTML 走网络优先，保证更新可用） */
-const CACHE = 'heartlog-v2'
-const PRECACHE = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg']
+const CACHE = 'heartlog-v3'
+const PRECACHE = ['./', './index.html', './author.html', './manifest.webmanifest', './author.webmanifest', './icons/icon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -47,14 +47,18 @@ self.addEventListener('fetch', (event) => {
 
   // 页面导航：网络优先，离线回落到缓存
   if (req.mode === 'navigate') {
+    // 两个入口共用一个 worker，缓存键必须按路径区分：
+    // 早期实现把所有导航响存成 './index.html'，打开作者端会覆盖访客首屏，离线时看到错页。
+    const isAuthor = new URL(req.url).pathname.endsWith('author.html')
+    const key = isAuthor ? './author.html' : './index.html'
     event.respondWith(
       fetch(req)
         .then((res) => {
           const copy = res.clone()
-          caches.open(CACHE).then((c) => c.put('./index.html', copy)).catch(() => undefined)
+          caches.open(CACHE).then((c) => c.put(key, copy)).catch(() => undefined)
           return res
         })
-        .catch(() => caches.match('./index.html').then((r) => r || Response.error())),
+        .catch(() => caches.match(key).then((r) => r || Response.error())),
     )
     return
   }

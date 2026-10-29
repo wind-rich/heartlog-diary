@@ -1,0 +1,40 @@
+{
+  "name": "心意簿 · 作者端",
+  "short_name": "心意簿作者",
+  "id": "./author.html",
+  "description": "心意簿作者端：记录、同步与发布。",
+  "start_url": "./author.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF6EE",
+  "theme_color": "#FFFCF8",
+  "lang": "zh-CN",
+  "categories": ["lifestyle", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

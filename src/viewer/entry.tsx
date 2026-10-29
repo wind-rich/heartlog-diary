@@ -40,6 +40,8 @@ async function healStaleCloudCache(): Promise<void> {
       const scriptUrl =
         reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || ''
       if (/push|tasks-sw/i.test(scriptUrl)) continue
+      // 页面外壳 worker 自己也要留：装上独立图标后靠它离线打开，注销会让图标变白屏
+      if (/\/sw\.js$/i.test(scriptUrl)) continue
       await reg.unregister().catch(() => undefined)
     }
     if (typeof caches !== 'undefined') {
@@ -61,6 +63,22 @@ async function healStaleCloudCache(): Promise<void> {
 }
 
 void healStaleCloudCache()
+
+/**
+ * 注册页面外壳缓存 worker。
+ *
+ * 目的：让「添加到主屏幕 / 安装应用」后的独立图标能离线打开首屏，也满足部分浏览器
+ * 对可安装性的要求。只缓存公开的页面外壳与带 hash 的静态资源；云端接口在 sw.js 里
+ * 已排除，不缓存任何照片或快照，访客端仍不写 IndexedDB。
+ */
+function registerShellSW(): void {
+  if (!import.meta.env.PROD || 'serviceWorker' in navigator === false) return
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => undefined)
+  })
+}
+
+registerShellSW()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

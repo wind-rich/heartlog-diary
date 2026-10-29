@@ -1,13 +1,14 @@
 {
-  "name": "心意簿 — 记录关于 TA 的一切",
+  "name": "心意簿 · 专属展示",
   "short_name": "心意簿",
-  "description": "记录伴侣的日常、偏好、照片与心情，支持回顾总结与导出备份。数据默认只存在你的设备上。",
+  "id": "./index.html",
+  "description": "围绕他展开的专属展示：纪念数字、照片、故事与互动。",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#FFF6EE",
-  "theme_color": "#FFF6EE",
+  "background_color": "#FFFCF8",
+  "theme_color": "#1A1220",
   "lang": "zh-CN",
   "categories": ["lifestyle", "productivity"],
   "icons": [
