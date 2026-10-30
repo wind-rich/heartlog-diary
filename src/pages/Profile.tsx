@@ -75,7 +75,7 @@ function PersonCard({ person }: { person: Person }) {
             {person.nickname || person.name || '还没有填名字'}
           </div>
           <div className="mt-1 flex items-center gap-2 flex-wrap text-[12.5px] text-ink-500">
-            {person.zodiac && <Tag color="#C99BD9">{person.zodiac}</Tag>}
+            {person.zodiac && <Tag color="#E08C74">{person.zodiac}</Tag>}
             {person.birthday && <span>生日 {person.birthday.slice(5)}</span>}
             {lunar && <span>农历{lunar.monthInChinese}月{lunar.dayInChinese}</span>}
           </div>

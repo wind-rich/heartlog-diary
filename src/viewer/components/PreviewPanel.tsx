@@ -62,7 +62,7 @@ export function PreviewPanel({ title, subtitle, icon: Icon, accent, onClose, all
         type="button"
         aria-label="关闭预览"
         onClick={onClose}
-        className="v-fade absolute inset-0 cursor-default bg-[#151827]/50 backdrop-blur-[2px]"
+        className="v-fade absolute inset-0 cursor-default bg-[#1E1B18]/50 backdrop-blur-[2px]"
         tabIndex={-1}
       />
 

@@ -151,7 +151,7 @@ export default function TaskBell() {
 
       {open && (
         <div className="fixed inset-0 z-[75] flex items-start justify-center px-3 pt-16 sm:items-center sm:pt-0">
-          <div className="absolute inset-0 bg-[#151827]/45 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
+          <div className="absolute inset-0 bg-[#1E1B18]/45 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
           <div className="v-task-bell-pop relative max-h-[76vh] w-full max-w-[440px] overflow-hidden rounded-2xl shadow-pop">
             <div className="flex items-center gap-2 border-b border-cream-200 px-4 py-3">
               <BellRing size={15} className="text-rose-deep" />

@@ -100,7 +100,7 @@ function prepareSnapshot(
 
 function CenteredCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#FFFCF8] px-6">
+    <div className="flex min-h-screen items-center justify-center bg-[#FBF8F1] px-6">
       <div className="w-full max-w-[360px] rounded-2xl border border-cream-200 bg-white p-5 text-center shadow-sm">
         <div className="text-[15px] font-semibold text-ink-900">{title}</div>
         <div className="mt-2 text-[12.5px] leading-relaxed text-ink-500">{children}</div>

@@ -29,15 +29,15 @@ const GAME_COMPONENTS: Record<GameId, typeof MemoryGame> = {
 }
 
 function LoadingGame() {
-  return <div className="v-paper-section mx-auto max-w-[560px] px-4 py-10 text-center text-[13px] text-[#666174]">正在打开玩法…</div>
+  return <div className="v-paper-section mx-auto max-w-[560px] px-4 py-10 text-center text-[13px] text-[#6F665C]">正在打开玩法…</div>
 }
 
 function GameDisabled({ reason, canGoHall }: { reason: string; canGoHall: boolean }) {
   return (
     <div className="mx-auto max-w-[520px] py-16 text-center">
-      <Sparkles size={22} className="mx-auto text-[#8A759E]" />
-      <p className="mt-3 text-[15px] text-[#292635]">这个互动没有开启</p>
-      <p className="mt-1 text-[13px] leading-relaxed text-[#666174]">{reason}</p>
+      <Sparkles size={22} className="mx-auto text-[#A8321F]" />
+      <p className="mt-3 text-[15px] text-[#1E1B18]">这个互动没有开启</p>
+      <p className="mt-1 text-[13px] leading-relaxed text-[#6F665C]">{reason}</p>
       <Link to={canGoHall ? '/game' : '/'} className="btn-ghost mt-4 inline-flex min-h-11 items-center px-3 text-[12.5px]">
         {canGoHall ? '返回互动大厅' : '回到首页'}
       </Link>
@@ -90,9 +90,9 @@ export default function GamePage() {
       </header>
 
       {!playable.length && (
-        <div className="rounded-2xl border border-dashed border-[#D8D0C8] bg-[#FFFDFA]/70 px-4 py-8 text-center">
-          <p className="text-[13px] font-medium text-[#292635]">暂时还没有可玩的内容</p>
-          <p className="mt-1 text-[12px] text-[#666174]">已开启的玩法素材不足；可以先去相册或故事页看看。</p>
+        <div className="rounded-2xl border border-dashed border-[#D8D0C8] bg-[#FBF8F1]/70 px-4 py-8 text-center">
+          <p className="text-[13px] font-medium text-[#1E1B18]">暂时还没有可玩的内容</p>
+          <p className="mt-1 text-[12px] text-[#6F665C]">已开启的玩法素材不足；可以先去相册或故事页看看。</p>
         </div>
       )}
 

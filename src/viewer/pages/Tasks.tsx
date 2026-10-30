@@ -732,7 +732,7 @@ function CompleteInline({ task, onClose, onDone }: { task: Task; onClose: () => 
   const [share, setShare] = useState(false)
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
-      <div className="absolute inset-0 bg-[#151827]/45 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 bg-[#1E1B18]/45 backdrop-blur-[2px]" onClick={onClose} />
       <div className="v-task-complete-dialog relative w-full max-w-[420px] rounded-t-3xl p-5 sm:rounded-3xl">
         <p className="text-[15px] font-semibold text-ink-900">
           {task.kind === 'remind' ? '我已经提醒过他了' : '这件事已经办好了'}

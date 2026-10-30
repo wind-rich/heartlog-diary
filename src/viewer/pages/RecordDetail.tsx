@@ -93,7 +93,7 @@ export default function RecordDetail() {
 
       <header className="v-record-header">
         <div className="v-eyebrow">A PAGE FROM OUR DAYS</div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-[#666174]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-[#6F665C]">
           <span className="tabular-nums text-ink-700">{entryDateText(entry.occurredAt)}</span>
           <span className="text-cream-300">·</span>
           <span>{KIND_LABEL[entry.kind]}</span>

@@ -4,24 +4,30 @@ export default {
   theme: {
     extend: {
       colors: {
+        // 「信笺」体系：纸、墨、朱砂。旧色名保留，整站内联类随之换色。
         cream: {
-          50: '#FFFCF8',
-          100: '#FFF6EE',
-          200: '#FBEADC',
-          300: '#F3D9C4',
+          50: '#FBF8F1',
+          100: '#F3EEE4',
+          200: '#E6DED0',
+          300: '#D6CBB9',
         },
         rose: {
-          soft: '#F2A7A0',
-          deep: '#D9705F',
+          soft: '#E08C74',
+          deep: '#C23B26',
         },
         ink: {
-          900: '#3B332E',
-          700: '#5C5148',
-          500: '#8A7D72',
-          300: '#B9ADA2',
+          900: '#1E1B18',
+          700: '#3E3832',
+          500: '#766D63',
+          300: '#A89E91',
         },
+        seal: { DEFAULT: '#C23B26', ink: '#9E2E1C', wash: '#F4DFD6' },
+        sage: { DEFAULT: '#5E6E4E', wash: '#E3E7D8' },
+        butter: { DEFAULT: '#E3B94C', wash: '#F5EACB' },
       },
       fontFamily: {
+        serif: ['"Songti SC"', '"STSong"', '"Noto Serif SC"', '"Source Han Serif SC"', '"Noto Serif CJK SC"', 'SimSun', 'serif'],
+        mono: ['"SF Mono"', '"JetBrains Mono"', 'Menlo', 'Consolas', 'monospace'],
         sans: [
           '"PingFang SC"',
           '"Hiragino Sans GB"',
@@ -32,8 +38,8 @@ export default {
         ],
       },
       boxShadow: {
-        card: '0 2px 12px rgba(150, 120, 100, 0.08)',
-        pop: '0 12px 40px rgba(90, 70, 55, 0.18)',
+        card: '0 1px 0 rgba(30, 27, 24, 0.04), 0 8px 24px -14px rgba(30, 27, 24, 0.18)',
+        pop: '0 24px 60px -20px rgba(30, 27, 24, 0.35)',
       },
       borderRadius: {
         xl2: '1.25rem',

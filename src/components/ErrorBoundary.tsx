@@ -27,7 +27,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     if (!error) return this.props.children
 
     return (
-      <div className="min-h-screen bg-[#FFFCF8] px-4 py-8">
+      <div className="min-h-screen bg-[#FBF8F1] px-4 py-8">
         <div className="mx-auto max-w-[720px] rounded-2xl border border-rose-soft/50 bg-white p-4 shadow-sm">
           <div className="text-[15px] font-semibold text-[#8E4850]">页面出错了</div>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">

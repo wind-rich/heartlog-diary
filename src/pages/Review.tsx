@@ -203,7 +203,7 @@ export default function Review() {
                   <button className="text-left w-full" onClick={() => setViewing(s)}>
                     <div className="text-[14.5px] text-ink-900">{s.title}</div>
                     <div className="mt-1 flex items-center gap-2 text-[11.5px] text-ink-300 flex-wrap">
-                      <Tag color={s.generator === 'ai' ? '#C99BD9' : '#8CBF9B'}>{s.generator === 'ai' ? `AI · ${s.aiMeta?.model ?? ''}` : '手动'}</Tag>
+                      <Tag color={s.generator === 'ai' ? '#E08C74' : '#8CBF9B'}>{s.generator === 'ai' ? `AI · ${s.aiMeta?.model ?? ''}` : '手动'}</Tag>
                       <span>{fmtDateTime(s.createdAt)}</span>
                       <span>引用 {s.evidenceEntryIds?.length ?? 0} 条记录</span>
                     </div>
@@ -249,7 +249,7 @@ export default function Review() {
       {viewing && (
         <Modal open onClose={() => setViewing(null)} title={viewing.title} full>
           <div className="mb-3 flex items-center gap-2 flex-wrap text-[12px] text-ink-300">
-            <Tag color={viewing.generator === 'ai' ? '#C99BD9' : '#8CBF9B'}>{viewing.generator === 'ai' ? 'AI 生成' : '手动汇总'}</Tag>
+            <Tag color={viewing.generator === 'ai' ? '#E08C74' : '#8CBF9B'}>{viewing.generator === 'ai' ? 'AI 生成' : '手动汇总'}</Tag>
             <span>{fmtDateTime(viewing.createdAt)}</span>
             <span>
               范围 {toDateStr(viewing.rangeStart)} ~ {toDateStr(viewing.rangeEnd)}
@@ -301,7 +301,7 @@ function AIResultView({ content, cited, gaps }: { content: string; cited: number
   return (
     <div>
       <div className="flex items-center gap-2 mb-2 text-[12px] text-ink-300">
-        <Tag color="#C99BD9">AI 生成</Tag>
+        <Tag color="#E08C74">AI 生成</Tag>
         <span>引用 {cited} 条原始记录</span>
       </div>
       <div className="rounded-xl border border-cream-200 bg-white p-3">

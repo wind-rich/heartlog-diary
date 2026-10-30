@@ -289,7 +289,7 @@ export default function GameContentPage() {
 
       {draft && (
         <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-900/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="编辑互动内容">
-          <div className="mx-auto my-8 max-w-[640px] rounded-3xl bg-[#FFFCF8] p-5 shadow-xl">
+          <div className="mx-auto my-8 max-w-[640px] rounded-3xl bg-[#FBF8F1] p-5 shadow-xl">
             <h2 className="text-[17px] font-semibold text-ink-900">{draft.id ? '编辑' : '新增'}{gameContentKindLabel(draft.kind)}</h2>
             <div className="mt-4 space-y-4">
               {draft.kind === 'quiz' ? (
@@ -319,7 +319,7 @@ export default function GameContentPage() {
 
       {previewTreasure && (
         <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-900/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="预览星球寻宝">
-          <div className="mx-auto my-8 max-w-[620px] rounded-3xl bg-[#FFFCF8] p-5 shadow-xl">
+          <div className="mx-auto my-8 max-w-[620px] rounded-3xl bg-[#FBF8F1] p-5 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-[17px] font-semibold text-ink-900">{previewTreasure.title}</h2>

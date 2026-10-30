@@ -40,11 +40,11 @@ import { usablePhotos } from '../game/memory'
 import { fmtDate, parseAny } from '../../lib/date'
 
 const NODE_META = {
-  photos: { label: '照片', icon: Images, accent: '#D9BC89' },
-  stories: { label: '故事', icon: BookHeart, accent: '#C8B8E2' },
-  anniversary: { label: '纪念日', icon: CalendarDays, accent: '#E4C993' },
-  wishes: { label: '心愿', icon: Sparkles, accent: '#B9ABD9' },
-  archive: { label: '档案', icon: UserRound, accent: '#A9BED4' },
+  photos: { label: '照片', icon: Images, accent: '#D19A2A', note: '留住的光' },
+  stories: { label: '故事', icon: BookHeart, accent: '#C23B26', note: '说过的话、一起过的日子' },
+  anniversary: { label: '纪念日', icon: CalendarDays, accent: '#C46A2F', note: '要一起记得的日子' },
+  wishes: { label: '心愿', icon: Sparkles, accent: '#5E6E4E', note: '他想要的、想去的' },
+  archive: { label: '档案', icon: UserRound, accent: '#4F6A80', note: '偏好、画像与健康' },
 } as const
 
 type NodeKey = keyof typeof NODE_META
@@ -80,6 +80,7 @@ export default function Home() {
       label: NODE_META[key].label,
       icon: NODE_META[key].icon,
       accent: NODE_META[key].accent,
+      note: NODE_META[key].note,
       count: raw[key] > 0 ? raw[key] : null,
     }))
   }, [s])
@@ -105,74 +106,60 @@ export default function Home() {
       )}
 
       <section
-        className={clsx(
-          'v-universe relative rounded-[26px] border border-white/10 px-5 pb-6 pt-5 sm:px-7 sm:pb-8 sm:pt-7',
-          paused && 'v-motion-paused',
-        )}
+        className={clsx('v-universe v-cover', paused && 'v-motion-paused')}
         data-testid="universe"
       >
-        <div className="relative z-10 flex items-center gap-2">
-          <span className="v-universe-kicker inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#E4D9F2]/20 bg-white/5 px-2.5 py-1 text-[10.5px] tracking-wide text-[#EEE7F7]/80">
-            <Heart size={10} className="text-[#D9BC89]" fill="currentColor" />
-            以他为中心的宇宙
+        <div className="v-cover-top">
+          <span className="v-universe-kicker">
+            <Heart size={10} fill="currentColor" />
+            {days !== null ? `第 ${days} 天` : '以他为中心'}
+            <span className="v-cover-top-sep">·</span>
+            <span className="v-cover-top-sub">心意簿</span>
           </span>
           <div className="flex-1" />
+          {editable && reload && (
+            <button type="button" onClick={() => setPersonEditing(true)} className="v-cover-chip">
+              编辑人物资料
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setPaused((p) => !p)}
             aria-pressed={paused}
-            className="inline-flex min-h-11 items-center gap-1 whitespace-nowrap rounded-full border border-[#E4D9F2]/20 bg-white/5 px-2.5 py-1 text-[10.5px] text-[#EEE7F7]/80 transition hover:bg-white/10"
+            className="v-cover-chip"
           >
             {paused ? <Play size={10} /> : <Pause size={10} />}
             {paused ? '已暂停' : '动效'}
           </button>
         </div>
+        {editable && reload && (
+          <Suspense fallback={null}>
+            <PersonEditor open={personEditing} onClose={() => setPersonEditing(false)} onSaved={() => void reload()} />
+          </Suspense>
+        )}
 
-        <div className="relative z-10 mt-2 grid grid-cols-1 items-center gap-3 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-6">
-          <div className="order-1 lg:order-2">
-            {editable && reload && (
-              <>
-                <div className="mt-1 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setPersonEditing(true)}
-                    className="rounded-full border border-[#E4D9F2]/20 bg-white/5 px-2.5 py-1 text-[11px] text-[#EEE7F7]/85 transition hover:bg-white/10"
-                  >
-                    编辑人物资料
-                  </button>
-                </div>
-                <Suspense fallback={null}>
-                  <PersonEditor open={personEditing} onClose={() => setPersonEditing(false)} onSaved={() => void reload()} />
-                </Suspense>
-              </>
-            )}
-            <UniverseMap
-              name={s.person.displayName || '未设置称呼'}
-              avatarUrl={avatar}
-              archiveHref="/archive?tab=portrait"
-              tagline={s.config.tagline || '还没有写寄语'}
-              nodes={nodes}
-              activeKey={active}
-              onSelect={(k) => setActive(k)}
-            />
-          </div>
-
-          <div className="order-2 px-1 lg:order-1 lg:pl-2">
-            <p className="hidden text-[11px] tracking-[0.2em] text-[#C8B8E2]/65 lg:block">OUR LITTLE UNIVERSE</p>
-            <h1 className="v-hero-title mx-auto mt-0 max-w-[380px] text-balance text-center text-[23px] leading-snug text-[#F7F3ED] sm:text-[27px] lg:mx-0 lg:mt-3 lg:max-w-none lg:text-left lg:text-[34px]">
-              {s.config.tagline || '关于你的每一件小事，都值得被记住'}
-            </h1>
-            <p className="v-clamp-3 mx-auto mt-2 max-w-[380px] text-center text-[13px] leading-[1.8] text-[#E7E0EF]/80 lg:mx-0 lg:block lg:overflow-visible lg:text-left">
-              {s.person.intro || '这里会写下关于他的小事：说过的话、喜欢的东西、一起过的日子。'}
-            </p>
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 lg:justify-start">
-              <p className="text-[11px] text-[#C8B8E2]/75">轻点星球，看看围绕他的故事</p>
-              <Link to="/archive?tab=portrait" className="inline-flex min-h-11 items-center gap-1 text-[11.5px] font-medium text-[#E4C993] transition hover:text-[#FFF3D9]">
-                走进他的档案 <ArrowUpRight size={13} />
-              </Link>
-            </div>
-          </div>
+        <div className="v-cover-copy">
+          <p className="v-cover-for">
+            写给 <b>{s.person.displayName || '他'}</b>
+          </p>
+          <h1 className="v-hero-title">{s.config.tagline || '关于你的每一件小事，都值得被记住'}</h1>
+          <p className="v-cover-intro">
+            {s.person.intro || '这里会写下关于他的小事：说过的话、喜欢的东西、一起过的日子。'}
+          </p>
+          <Link to="/archive?tab=portrait" className="v-cover-link">
+            走进他的档案 <ArrowUpRight size={14} />
+          </Link>
         </div>
+
+        <UniverseMap
+          name={s.person.displayName || '未设置称呼'}
+          avatarUrl={avatar}
+          archiveHref="/archive?tab=portrait"
+          tagline={s.config.tagline || '还没有写寄语'}
+          nodes={nodes}
+          activeKey={active}
+          onSelect={(k) => setActive(k)}
+        />
       </section>
 
       <MilestoneGrid days={days} meetDate={s.person.meetDate} next={next} storyCount={counts.entries} photoCount={counts.photos} />
@@ -227,10 +214,10 @@ export default function Home() {
         <section className="v-home-block">
           <SectionHead title="这一首" hint="由你点击播放，不会自动开始" />
           <div className="v-paper-section flex items-center gap-3 p-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EEE8F3] text-[#665080]"><Music4 size={18} /></span>
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EAE3D6] text-[#A8321F]"><Music4 size={18} /></span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13.5px] font-medium text-[#292635]">{s.config.music.title}</p>
-              <p className="mt-0.5 text-[11px] text-[#666174]">{s.config.music.artist || '未填写来源'}</p>
+              <p className="truncate text-[13.5px] font-medium text-[#1E1B18]">{s.config.music.title}</p>
+              <p className="mt-0.5 text-[11px] text-[#6F665C]">{s.config.music.artist || '未填写来源'}</p>
             </div>
             <button type="button" disabled={!s.config.music.src} className="btn-ghost min-h-11 px-3 text-[11.5px]" title={s.config.music.src ? '播放' : '还没有配置音源'}>
               {s.config.music.src ? '播放' : '音源未配置'}
@@ -312,8 +299,8 @@ function NodePreviewBody({ node }: { node: NodeKey }) {
     return (
       <ul className="space-y-2">
         {list.map((u) => (
-          <li key={u.item.id} className="rounded-xl border border-cream-200 bg-[#FFFDFA] px-3 py-2.5">
-            <div className="flex items-baseline justify-between gap-2"><span className="text-[13px] font-medium text-ink-900">{u.item.name}</span><span className="text-[11.5px] text-[#665080]">{daysLeftText(u.daysLeft)}</span></div>
+          <li key={u.item.id} className="rounded-xl border border-cream-200 bg-[#FBF8F1] px-3 py-2.5">
+            <div className="flex items-baseline justify-between gap-2"><span className="text-[13px] font-medium text-ink-900">{u.item.name}</span><span className="text-[11.5px] text-[#A8321F]">{daysLeftText(u.daysLeft)}</span></div>
             <div className="mt-0.5 text-[11px] text-ink-500">{fmtDate(u.date)} · {anniversaryDateText(u.item)}</div>
           </li>
         ))}
@@ -327,7 +314,7 @@ function NodePreviewBody({ node }: { node: NodeKey }) {
     return (
       <ul className="space-y-2">
         {list.map((w) => (
-          <li key={w.id} className="rounded-xl border border-cream-200 bg-[#FFFDFA] px-3 py-2.5">
+          <li key={w.id} className="rounded-xl border border-cream-200 bg-[#FBF8F1] px-3 py-2.5">
             <div className="flex items-start justify-between gap-2"><span className="text-[12.5px] leading-snug text-ink-900">{w.content}</span><Pill tone={w.status === 'wish' ? 'rose' : 'neutral'}>{WISH_LABEL[w.status]}</Pill></div>
             {w.note && <p className="mt-1 text-[11px] text-ink-500">{w.note}</p>}
           </li>
@@ -345,7 +332,7 @@ function NodePreviewBody({ node }: { node: NodeKey }) {
         ))}
       </div>
       {prefs.length ? (
-        <ul className="space-y-1.5">{prefs.map((p) => <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-[#FFFDFA] px-3 py-2 text-[12px]"><span className="truncate text-ink-700">{p.name}</span><span className="shrink-0 text-[10.5px] text-ink-300">{DIRECTION_LABEL[p.direction]}</span></li>)}</ul>
+        <ul className="space-y-1.5">{prefs.map((p) => <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-[#FBF8F1] px-3 py-2 text-[12px]"><span className="truncate text-ink-700">{p.name}</span><span className="shrink-0 text-[10.5px] text-ink-300">{DIRECTION_LABEL[p.direction]}</span></li>)}</ul>
       ) : <EmptyState title="还没有偏好记录" compact />}
     </div>
   )

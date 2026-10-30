@@ -210,7 +210,7 @@ function StoryRow({ entry, photoIds, onOpen }: { entry: PublicEntry; photoIds: s
           <div className="v-story-row-meta">
             <span>{KIND_LABEL[entry.kind]}</span>
             {entry.mood && (
-              <Pill className="!border-[#e5ded5] !bg-[#f7f3ed] !text-[#666174]">
+              <Pill className="!border-[#d8cebe] !bg-[#f3eee4] !text-[#6F665C]">
                 {entry.mood === 'custom' ? entry.moodCustom || '心情' : MOOD_LABEL[entry.mood]}
                 {entry.moodLevel ? ` ${entry.moodLevel}/5` : ''}
               </Pill>
