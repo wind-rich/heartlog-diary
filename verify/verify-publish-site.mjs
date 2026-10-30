@@ -200,7 +200,14 @@ try {
   if (viewer.imgBroken > 0) problems.push(`访客端 ${viewer.imgBroken} 张图片加载失败`)
   if (viewer.overflow > 1) problems.push(`访客端横向溢出 ${viewer.overflow}px`)
   const mE = viewer.footer.match(/记录\s*(\d+)/)
-  if (!mE || Number(mE[1]) !== manifest.counts.entries) problems.push(`访客端记录数与快照不一致：${viewer.footer}`)
+  const shownId = (viewer.footer.match(/pub_[a-z0-9]+/i) || [])[0] || ''
+  if (shownId && shownId !== manifest.publishId) {
+    // 作者已在云端发布更新的版本：页脚数字来自云端快照，不该拿随包静态兜底去比
+    notes.push(`访客端读的是云端版本 ${shownId}，随包静态快照为 ${manifest.publishId}，跳过计数比对`)
+    if (!mE || Number(mE[1]) <= 0) problems.push(`访客端记录数异常：${viewer.footer}`)
+  } else if (!mE || Number(mE[1]) !== manifest.counts.entries) {
+    problems.push(`访客端记录数与快照不一致：${viewer.footer}`)
+  }
   if (!LIVE) {
     // 静态检查：HTML/JS/CSS 里提到的 assets 文件必须真实存在（防懒加载 chunk 被误删）
     const missing = []

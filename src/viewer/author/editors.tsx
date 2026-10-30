@@ -2,8 +2,8 @@
  * 作者端编辑组件：直接用本机数据写入，不经过发布快照。
  * 只做展示端界面里的编辑入口，界面风格沿用浏览态（暖色卡片 + 同一套间距）。
  */
-import { useEffect, useState } from 'react'
-import { Pencil, Trash2, Upload } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Camera, Pencil, Trash2, Upload } from 'lucide-react'
 import { Modal, useToast, useConfirm } from '../../components/ui'
 import { db, deletePhotoCascade, entryRepo, savePerson, nowISO, updatePhotoCaption } from '../../db/db'
 import { addPhotoFiles } from '../../lib/photo'
@@ -72,6 +72,9 @@ export function EntryEditor({
   const [tags, setTags] = useState('')
   const [photoIds, setPhotoIds] = useState<string[]>([])
   const [photos, setPhotos] = useState<Photo[]>([])
+  const [pending, setPending] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -85,8 +88,31 @@ export function EntryEditor({
     setMood(entry?.mood ?? '')
     setTags((entry?.tagList ?? []).join(' '))
     setPhotoIds(entry?.photoIds ?? [])
+    setPending([])
     void db.photos.toArray().then(setPhotos)
   }, [open, entry])
+
+  /** 新建时先暂存文件，保存记录后再入库并挂到这条记录上 */
+  async function addPhotosFrom(list: FileList | null) {
+    if (!list?.length || !person) return
+    const files = [...list]
+    if (!entry) {
+      setPending((prev) => [...prev, ...files])
+      toast(`已选 ${files.length} 张，保存这条记录后会一起加入`)
+      return
+    }
+    setUploading(true)
+    try {
+      const added = await addPhotoFiles(files, { personId: person.id, entryId: entry.id })
+      setPhotoIds((prev) => [...prev, ...added.map((p) => p.id)])
+      setPhotos(await db.photos.toArray())
+      toast(`已添加 ${added.length} 张照片`)
+    } catch (err) {
+      toast(`添加照片失败：${(err as Error).message}`, 'err')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   async function save() {
     if (!person) return
@@ -114,8 +140,19 @@ export function EntryEditor({
         photoIds,
         quick: false,
       }
+      let savedId = entry?.id
       if (entry) await entryRepo.update(entry.id, payload)
-      else await entryRepo.create({ ...payload, followUpDone: false })
+      else {
+        const created = await entryRepo.create({ ...payload, followUpDone: false })
+        savedId = created.id
+      }
+      // 新建时暂存的照片在这里入库，并把 id 补进这条记录
+      if (pending.length && savedId) {
+        const added = await addPhotoFiles(pending, { personId: person.id, entryId: savedId })
+        if (added.length) {
+          await entryRepo.update(savedId, { photoIds: [...photoIds, ...added.map((p) => p.id)] })
+        }
+      }
       toast(entry ? '已保存' : '已记下')
       onSaved()
       onClose()
@@ -199,37 +236,88 @@ export function EntryEditor({
           ))}
         </div>
 
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="block text-[12px] text-ink-500">照片</span>
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+              className="inline-flex items-center gap-1 rounded-full border border-cream-300 bg-white px-2.5 py-1 text-[11.5px] text-ink-600 transition hover:text-rose-deep disabled:opacity-60"
+            >
+              <Camera size={12} /> {uploading ? '上传中…' : '上传新照片'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void addPhotosFrom(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </div>
+
+          {pending.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pending.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="relative h-12 w-12 overflow-hidden rounded-lg border border-cream-200">
+                  <img
+                    src={URL.createObjectURL(f)}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
+                  />
+                  <button
+                    type="button"
+                    aria-label="移除这张待上传照片"
+                    onClick={() => setPending((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-black/60 text-[10px] leading-none text-white"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {photos.length > 0 ? (
+            <>
+              <span className="mb-1 block text-[11px] text-ink-400">已有照片（点选关联）</span>
+              <div className="grid max-h-[160px] grid-cols-6 gap-1.5 overflow-y-auto">
+                {photos.map((p) => {
+                  const picked = photoIds.includes(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setPhotoIds((prev) => (picked ? prev.filter((x) => x !== p.id) : [...prev, p.id]))}
+                      className={`relative aspect-square overflow-hidden rounded-lg border ${picked ? 'border-rose-deep ring-2 ring-rose-soft/60' : 'border-cream-200'}`}
+                      aria-label={picked ? '取消选择' : '选择这张'}
+                    >
+                      <img
+                        src={URL.createObjectURL(p.thumb)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
+                      />
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          ) : (
+            pending.length === 0 && <span className="text-[11px] text-ink-400">还没有照片，点右上角「上传新照片」。</span>
+          )}
+        </div>
+
         <label className="block">
           <span className="mb-1 block text-[12px] text-ink-500">标签（空格分隔）</span>
           <input className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="旅行 电影" />
         </label>
 
-        {photos.length > 0 && (
-          <div>
-            <span className="mb-1 block text-[12px] text-ink-500">关联照片（可多选）</span>
-            <div className="grid max-h-[160px] grid-cols-6 gap-1.5 overflow-y-auto">
-              {photos.map((p) => {
-                const picked = photoIds.includes(p.id)
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setPhotoIds((prev) => (picked ? prev.filter((x) => x !== p.id) : [...prev, p.id]))}
-                    className={`relative aspect-square overflow-hidden rounded-lg border ${picked ? 'border-rose-deep ring-2 ring-rose-soft/60' : 'border-cream-200'}`}
-                    aria-label={picked ? '取消选择' : '选择这张'}
-                  >
-                    <img
-                      src={URL.createObjectURL(p.thumb)}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
-                    />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
       </div>
     </Modal>
   )

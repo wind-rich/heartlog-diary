@@ -186,7 +186,7 @@ export default function Home() {
         ) : (
           <div className="v-home-stories">
             {recent.map((entry) => (
-              <StoryCoverCard key={entry.id} entry={entry} photos={s.photos.filter((p) => p.entryId === entry.id)} />
+              <StoryCoverCard key={entry.id} entry={entry} photos={s.photos.filter((p) => entry.photoIds.includes(p.id))} />
             ))}
           </div>
         )}

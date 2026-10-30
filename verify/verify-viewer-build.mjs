@@ -245,9 +245,17 @@ try {
     const expectManifest = JSON.parse(readFileSync(join(SITE, 'snapshot/public-snapshot.json'), 'utf8')).manifest
     const mE = home.footer.match(/记录\s*(\d+)/)
     const mP = home.footer.match(/照片\s*(\d+)/)
-    if (!mE || Number(mE[1]) !== expectManifest.counts.entries) problems.push(`页脚记录数与快照不一致：${home.footer}`)
-    if (!mP || Number(mP[1]) !== expectManifest.counts.photos) problems.push(`页脚照片数与快照不一致：${home.footer}`)
-    console.log(`真实内容：${expectManifest.publishId} · ${expectManifest.counts.entries} 条记录 / ${expectManifest.counts.photos} 张照片`)
+    const shownId = (home.footer.match(/pub_[a-z0-9]+/i) || [])[0] || ''
+    const cloudNewer = shownId && shownId !== expectManifest.publishId
+    if (cloudNewer) {
+      // 线上读的是作者后来发布的云端版本，页脚数字本来就该与随包静态兜底不同
+      console.log(`真实内容：云端版本 ${shownId}（随包兜底 ${expectManifest.publishId}），跳过计数比对`)
+      if (!mE || !mP) problems.push(`页脚缺少版本或计数信息：${home.footer}`)
+    } else {
+      if (!mE || Number(mE[1]) !== expectManifest.counts.entries) problems.push(`页脚记录数与快照不一致：${home.footer}`)
+      if (!mP || Number(mP[1]) !== expectManifest.counts.photos) problems.push(`页脚照片数与快照不一致：${home.footer}`)
+      console.log(`真实内容：${expectManifest.publishId} · ${expectManifest.counts.entries} 条记录 / ${expectManifest.counts.photos} 张照片`)
+    }
   } else if (!home.hasSample) {
     problems.push('缺少「示例数据」标记，可能被误认为真实数据')
   }

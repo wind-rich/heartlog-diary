@@ -72,7 +72,7 @@ function StoryCoverImage({ photo, title }: { photo?: PublicPhoto; title: string 
 }
 
 export function StoryCoverCard({ entry, photos }: { entry: PublicEntry; photos: PublicPhoto[] }) {
-  const cover = photos.find((p) => entry.photoIds.includes(p.id)) || photos[0]
+  const cover = photos.find((p) => entry.photoIds.includes(p.id))
   return (
     <Link to={`/stories/${entry.id}`} className="v-story-cover">
       <div className="v-story-cover-art"><StoryCoverImage photo={cover} title={entry.title} /></div>
