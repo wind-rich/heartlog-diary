@@ -361,8 +361,14 @@ const entries = byId(
   ),
 )
 
+// 视频不进静态兜底：签名地址只能在作者端发布时生成，构建期没有可用的播放地址
+const imageRows = tables.photos.filter((p) => (p.kind || 'image') !== 'video')
+if (imageRows.length !== tables.photos.length) {
+  console.log(`  跳过 ${tables.photos.length - imageRows.length} 段视频（静态兜底只含图片）`)
+}
+
 const photos = byId(
-  tables.photos.map((p) =>
+  imageRows.map((p) =>
     compact({
       id: p.id,
       personId: p.personId,

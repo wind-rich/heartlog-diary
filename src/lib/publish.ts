@@ -173,8 +173,18 @@ async function upsertMedia(rows: MediaRow[], publishId: string): Promise<void> {
   }
 }
 
-/** 生成不再带媒体地址的快照：图片由访客端按需从媒体表取 */
-function portableSnapshot(snapshot: PublishedSnapshot, publishId: string): PublishedSnapshot {
+/**
+ * 生成发布用快照。
+ *
+ * 图片：清空媒体地址，访客端按需从 `heartlog_public_media` 取。
+ * 视频：无法走 base64 媒体表，原件上传对象存储后把**签名地址**放进快照，
+ * 访客直接播放；签名有效期一年，每次发布会重新签发。
+ */
+function portableSnapshot(
+  snapshot: PublishedSnapshot,
+  publishId: string,
+  videoUrls: Map<string, string> = new Map(),
+): PublishedSnapshot {
   return {
     ...snapshot,
     manifest: {
@@ -182,13 +192,26 @@ function portableSnapshot(snapshot: PublishedSnapshot, publishId: string): Publi
       publishId,
       publishedAt: new Date().toISOString(),
     },
-    photos: snapshot.photos.map((p) => ({
-      ...p,
-      media: {
-        thumb: { ...p.media.thumb, url: '' },
-        full: { ...p.media.full, url: '' },
-      },
-    })),
+    photos: snapshot.photos.map((p) => {
+      const signed = videoUrls.get(p.id)
+      if (signed) {
+        return {
+          ...p,
+          kind: 'video' as const,
+          media: {
+            thumb: { ...p.media.thumb, url: '' },
+            full: { ...p.media.full, url: signed },
+          },
+        }
+      }
+      return {
+        ...p,
+        media: {
+          thumb: { ...p.media.thumb, url: '' },
+          full: { ...p.media.full, url: '' },
+        },
+      }
+    }),
   }
 }
 
@@ -204,12 +227,15 @@ export async function publishToCloud(
 
   onProgress({ phase: 'prepare', done: 0, total: 1, label: '整理内容' })
   await assertGameContentPublishable()
+  const session = await requireSession()
   const snapshot = await buildLocalSnapshot()
   if (!snapshot) throw new PublishError('本机还没有内容，先记点什么再发布')
 
   const publishId = `pub_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
-  // 视频只在本机看，不进公网页快照（体积与流量都不适合走 base64 媒体表）
-  const photos = (await db.photos.toArray()).filter((p) => p.kind !== 'video')
+  // 图片走 base64 媒体表；视频原件走对象存储，快照里只放签名地址
+  const allPhotos = await db.photos.toArray()
+  const photos = allPhotos.filter((p) => p.kind !== 'video')
+  const videos = allPhotos.filter((p) => p.kind === 'video')
   const existing = await loadExistingFingerprints()
 
   const errors: string[] = []
@@ -271,6 +297,50 @@ export async function publishToCloud(
     onProgress({ phase: 'photos', done, total: photos.length, label: '上传照片' })
   }
 
+  /* ---- 视频：封面进媒体表，原件进对象存储，快照里放签名地址 ---- */
+  const VIDEO_MAX_BYTES = 300 * 1024 * 1024
+  const VIDEO_URL_TTL = 365 * 24 * 3600
+  const videoUrls = new Map<string, string>()
+  if (videos.length) {
+    let vdone = 0
+    onProgress({ phase: 'photos', done: 0, total: videos.length, label: '上传视频' })
+    for (const v of videos) {
+      try {
+        if (v.size > VIDEO_MAX_BYTES) {
+          throw new Error(`超过 ${Math.round(VIDEO_MAX_BYTES / 1024 / 1024)}MB，先压缩或剪短再发`)
+        }
+        const fp = await fingerprint(v.thumb)
+        if (existing.get(`${v.id}:thumb`) !== fp) {
+          const buf = new Uint8Array(await v.thumb.arrayBuffer())
+          await upsertMedia(
+            [{ photo_id: v.id, kind: 'thumb', mime: 'image/jpeg', bytes: v.thumb.size, data_b64: b64(buf), fingerprint: fp }],
+            publishId,
+          )
+          existing.set(`${v.id}:thumb`, fp)
+          uploaded++
+          bytesUploaded += v.thumb.size
+        } else {
+          skipped++
+        }
+        const ext = (v.mime.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4'
+        const path = cloud.storage.userPath(session.user.id, `public/videos/${v.id}.${ext}`)
+        const up = await cloud.storage.upload(path, v.blob, { contentType: v.mime, upsert: true })
+        if (up.error) throw new Error(up.error.message || '原件上传失败')
+        const signed = await cloud.storage.createSignedUrl(path, VIDEO_URL_TTL)
+        if (signed.error || !signed.data?.signedUrl) {
+          throw new Error(signed.error?.message || '获取播放地址失败')
+        }
+        videoUrls.set(v.id, signed.data.signedUrl)
+        bytesUploaded += v.size
+      } catch (err) {
+        errors.push(`视频 ${v.id}：${(err as Error).message}`)
+      } finally {
+        vdone++
+        onProgress({ phase: 'photos', done: vdone, total: videos.length, label: '上传视频' })
+      }
+    }
+  }
+
   /**
    * 任一照片失败就中止发布。
    *
@@ -291,7 +361,7 @@ export async function publishToCloud(
   }
 
   onProgress({ phase: 'snapshot', done: 0, total: 1, label: '写入快照' })
-  const payload = portableSnapshot(snapshot, publishId)
+  const payload = portableSnapshot(snapshot, publishId, videoUrls)
 
   /**
    * 混版检查：快照里出现的每个 photo_id，在媒体表里必须 thumb + web 都齐。
@@ -299,11 +369,12 @@ export async function publishToCloud(
    * 一道廉价但对账有效的兜底：即使上传阶段因为跳过/指纹比对出现了漏格，
    * 也不能让「快照引用了没有媒体的照片」这种状态上线。
    */
-  const need = new Set<string>()
-  for (const p of payload.photos) need.add(String(p.id))
   const lack: string[] = []
-  for (const id of need) {
-    if (!existing.has(`${id}:thumb`) || !existing.has(`${id}:web`)) lack.push(id)
+  for (const p of payload.photos) {
+    const id = String(p.id)
+    // 视频没有 web 格：封面（thumb）走媒体表，原件走对象存储
+    const needsWeb = p.kind !== 'video'
+    if (!existing.has(`${id}:thumb`) || (needsWeb && !existing.has(`${id}:web`))) lack.push(id)
   }
   if (lack.length) {
     const head = lack.slice(0, 3).join(', ')
