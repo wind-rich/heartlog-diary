@@ -587,10 +587,10 @@ export function PhotoUploadButton({ personId, onDone }: { personId: string; onDo
   const [busy, setBusy] = useState(false)
   return (
     <label className="btn-ghost inline-flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px]">
-      {busy ? '上传中…' : <><Upload size={14} /> 上传照片</>}
+      {busy ? '上传中…' : <><Upload size={14} /> 上传照片/视频</>}
       <input
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         multiple
         className="hidden"
         disabled={busy}

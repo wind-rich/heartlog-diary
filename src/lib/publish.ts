@@ -208,7 +208,8 @@ export async function publishToCloud(
   if (!snapshot) throw new PublishError('本机还没有内容，先记点什么再发布')
 
   const publishId = `pub_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
-  const photos = await db.photos.toArray()
+  // 视频只在本机看，不进公网页快照（体积与流量都不适合走 base64 媒体表）
+  const photos = (await db.photos.toArray()).filter((p) => p.kind !== 'video')
   const existing = await loadExistingFingerprints()
 
   const errors: string[] = []

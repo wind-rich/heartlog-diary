@@ -231,13 +231,51 @@ try {
   })()`)
   if (!detail.edit || !detail.del) problems.push('记录详情缺少编辑/删除入口')
 
+  /* 4.45 视频：上传 2 秒 mp4，应出现播放角标，点开是 <video> 播放器 */
+  {
+    const videoPath = process.env.HL_TEST_VIDEO || ''
+    if (!videoPath || !existsSync(videoPath)) {
+      notes.push('视频上传：跳过（未提供 HL_TEST_VIDEO）')
+    } else {
+      await cdp.send('Page.navigate', { url: `${BASE}/#/album` })
+      await sleep(2200)
+      await cdp.send('DOM.enable')
+      const doc = await cdp.send('DOM.getDocument', { depth: 1 })
+      const picked = await cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: 'input[type="file"]' })
+      if (!picked?.nodeId) {
+        problems.push('相册页找不到上传用的文件输入框')
+      } else {
+        await cdp.send('DOM.setFileInputFiles', { nodeId: picked.nodeId, files: [videoPath] })
+        await sleep(7000)
+        const tile = await cdp.evaluate(`(() => {
+          const v = [...document.querySelectorAll('button[aria-label^="查看视频"]')]
+          return { count: v.length, header: (document.body.innerText.match(/共 \\d+ 项[^\\n]*/) || [''])[0] }
+        })()`)
+        if (tile.count < 1) problems.push('上传视频后相册里没有视频图块（播放角标缺失）')
+        await cdp.shot('09d-video-tile.png')
+        await cdp.evaluate(`(() => { document.querySelector('button[aria-label^="查看视频"]')?.click(); return true })()`)
+        await sleep(1600)
+        const player = await cdp.evaluate(`(() => {
+          const el = document.querySelector('.v-lightbox video')
+          return { video: !!el, src: el ? (el.getAttribute('src') || '').slice(0, 12) : '', controls: el ? el.controls : false }
+        })()`)
+        if (!player.video) problems.push('点开视频图块后没有出现播放器')
+        if (player.video && !player.controls) problems.push('播放器没有控制条')
+        notes.push(`视频上传：图块 ${tile.count} 个，播放器=${player.video}，控制条=${player.controls}，页头「${tile.header}」`)
+        await cdp.shot('09e-video-player.png')
+        await cdp.evaluate(`(() => { document.querySelector('[aria-label="关闭"]')?.click(); return true })()`)
+        await sleep(600)
+      }
+    }
+  }
+
   /* 4.5 相册：作者端每张照片都有删除入口，删一张会真的少一张 */
   await cdp.send('Page.navigate', { url: `${BASE}/#/album` })
   await sleep(2500)
   const albumBefore = await cdp.evaluate(`(() => {
     const t = document.body.innerText;
     return {
-      count: Number((t.match(/共 (\\d+) 张照片/) || [])[1] || 0),
+      count: Number((t.match(/共 (\\d+) 项/) || t.match(/共 (\\d+) 张照片/) || [])[1] || 0),
       deleteBtns: document.querySelectorAll('button[aria-label="删除这张照片"]').length,
       hasUpload: t.includes('上传照片'),
     };
@@ -304,7 +342,7 @@ try {
   await sleep(1800)
   const albumAfter = await cdp.evaluate(`(() => {
     const t = document.body.innerText;
-    return { count: Number((t.match(/共 (\\d+) 张照片/) || [])[1] || 0) };
+    return { count: Number((t.match(/共 (\\d+) 项/) || t.match(/共 (\\d+) 张照片/) || [])[1] || 0) };
   })()`)
   if (albumAfter.count !== albumBefore.count - 1) {
     problems.push(`删除照片后数量未减少：${albumBefore.count} → ${albumAfter.count}`)

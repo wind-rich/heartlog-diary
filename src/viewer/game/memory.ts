@@ -55,7 +55,7 @@ export interface MemoryRecord {
 
 /** 只有带缩略图的照片能当牌面：没有缩略图的牌翻开是一片空白，等于坏体验 */
 export function usablePhotos(photos: PublicPhoto[] | undefined): PublicPhoto[] {
-  return (photos ?? []).filter((p) => Boolean(p?.media?.thumb?.url))
+  return (photos ?? []).filter((p) => Boolean(p?.media?.thumb?.url) && p.kind !== 'video')
 }
 
 /* ------------------------------------------------------------------ */

@@ -79,22 +79,78 @@ export interface AddPhotoOptions {
   takenAt?: string
 }
 
+/**
+ * 从视频里抓一帧当封面，并读出时长。
+ *
+ * 只做本地播放用，不转码视频本身：原件有多大就存多大，避免手机端长时间编码。
+ * 抓帧位置取 10% 处（至少 0.3s），比第一帧更不容易是黑场。
+ */
+export async function pickVideoPoster(file: File, maxEdge = 720): Promise<{ poster: Blob; durationMs: number }> {
+  const url = URL.createObjectURL(file)
+  const video = document.createElement('video')
+  video.preload = 'auto'
+  video.muted = true
+  video.playsInline = true
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('视频读取超时，可能是格式不被支持')), 20000)
+      video.onloadeddata = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      video.onerror = () => {
+        clearTimeout(timer)
+        reject(new Error('视频无法解码'))
+      }
+      video.src = url
+    })
+    const durationMs = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0
+    const target = Math.min(Math.max(0.3, (video.duration || 1) * 0.1), Math.max(0.4, (video.duration || 1) - 0.1))
+    await new Promise<void>((resolve) => {
+      const done = () => resolve()
+      video.onseeked = done
+      video.currentTime = target
+      setTimeout(done, 5000)
+    })
+    const w = video.videoWidth || 720
+    const h = video.videoHeight || 1280
+    const scale = Math.min(1, maxEdge / Math.max(w, h))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(w * scale))
+    canvas.height = Math.max(1, Math.round(h * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('无法生成视频封面')
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const poster = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.78))
+    if (!poster) throw new Error('视频封面编码失败')
+    return { poster, durationMs }
+  } finally {
+    video.removeAttribute('src')
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+  }
+}
+
 export async function addPhotoFile(file: File, opts: AddPhotoOptions): Promise<Photo> {
   const keepOriginal = opts.keepOriginal ?? false
   const photoMaxEdge = opts.photoMaxEdge ?? 1920
   const thumbMaxEdge = opts.thumbMaxEdge ?? 400
 
   const isImage = file.type.startsWith('image/')
-  if (!isImage) throw new Error('只能上传图片文件')
+  const isVideo = file.type.startsWith('video/')
+  if (!isImage && !isVideo) throw new Error('只能上传图片或视频文件')
 
-  const stored = keepOriginal ? file : await resizeImage(file, photoMaxEdge, 0.85)
-  const thumb = await resizeImage(file, thumbMaxEdge, 0.7)
+  // 视频不转码：原件直接存，封面单独抓一帧
+  const stored = isVideo ? file : keepOriginal ? file : await resizeImage(file, photoMaxEdge, 0.85)
+  const videoMeta = isVideo ? await pickVideoPoster(file) : null
+  const thumb = videoMeta ? videoMeta.poster : await resizeImage(file, thumbMaxEdge, 0.7)
 
   const photo: Photo = {
     id: uid('ph_'),
     personId: opts.personId,
     blob: stored,
     thumb,
+    kind: isVideo ? 'video' : 'image',
+    durationMs: videoMeta?.durationMs,
     mime: stored.type || file.type || 'image/jpeg',
     size: stored.size,
     takenAt: opts.takenAt || new Date(file.lastModified || Date.now()).toISOString(),

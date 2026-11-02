@@ -88,7 +88,7 @@ export default function Home() {
   const upcoming = upcomingAnniversaries(s)
   const next = upcoming[0]
   const recent = recentEntries(s, 3)
-  const featured = photosDesc(s).slice(0, 3)
+  const featured = photosDesc(s).filter((p) => p.kind !== 'video').slice(0, 3)
   const wishesOpen = s.wishes.filter((w) => w.status === 'wish')
   const avatar = avatarUrlFor(s)
   const days = s.person.meetDate ? daysSinceDate(s.person.meetDate) : null

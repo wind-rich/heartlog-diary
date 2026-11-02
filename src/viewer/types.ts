@@ -43,6 +43,10 @@ export interface MediaAsset {
 export interface PublicPhoto {
   id: string
   personId: string
+  /** 媒体类型，缺省按图片处理；视频只在作者端本地出现，不进发布快照 */
+  kind?: 'image' | 'video'
+  /** 视频时长（毫秒） */
+  durationMs?: number
   mime: string
   size: number
   width?: number

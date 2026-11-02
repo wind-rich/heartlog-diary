@@ -202,8 +202,12 @@ export interface Photo {
   personId: string
   /** 原图或压缩图（取决于上传时的选择） */
   blob: Blob
-  /** 缩略图 */
+  /** 缩略图（视频时为封面帧） */
   thumb: Blob
+  /** 媒体类型，缺省按图片处理 */
+  kind?: 'image' | 'video'
+  /** 视频时长（毫秒），仅视频有 */
+  durationMs?: number
   mime: string
   /** 字节数 */
   size: number

@@ -1,10 +1,19 @@
 import type { ReactNode } from 'react'
 import { useFullPhotoUrl } from '../data/cloud'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, ImageOff, RefreshCw, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ImageOff, Play, RefreshCw, X } from 'lucide-react'
 import clsx from 'clsx'
 import type { PublicPhoto } from '../types'
 import { photoDateText } from '../lib/data'
+
+/** 毫秒时长 → m:ss */
+function fmtDuration(ms?: number): string {
+  if (!ms || ms <= 0) return ''
+  const total = Math.round(ms / 1000)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 /* ------------------------------------------------------------------ */
 /* 缩略图                                                              */
@@ -35,7 +44,11 @@ export function PhotoTile({ photo, className, onClick, eager }: TileProps) {
         'group relative block overflow-hidden rounded-xl bg-cream-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-deep/60',
         className,
       )}
-      aria-label={failed ? '照片加载失败，点击重试' : photo.caption ? `查看照片：${photo.caption}` : '查看照片'}
+      aria-label={
+        failed
+          ? '照片加载失败，点击重试'
+          : `${photo.kind === 'video' ? '查看视频' : '查看照片'}${photo.caption ? `：${photo.caption}` : ''}`
+      }
     >
       {failed ? (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-cream-100 px-2 text-center text-[11px] text-ink-500">
@@ -55,6 +68,20 @@ export function PhotoTile({ photo, className, onClick, eager }: TileProps) {
           className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
           draggable={false}
         />
+      )}
+      {!failed && photo.kind === 'video' && (
+        <>
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-sm">
+              <Play size={15} className="translate-x-[1px]" />
+            </span>
+          </span>
+          {photo.durationMs ? (
+            <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[10px] leading-none text-white">
+              {fmtDuration(photo.durationMs)}
+            </span>
+          ) : null}
+        </>
       )}
     </button>
   )
@@ -161,13 +188,26 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
         >
           <ChevronLeft size={20} />
         </button>
-        <img
-          src={fullUrl}
-          alt={photo.caption || '照片'}
-          onClick={(e) => e.stopPropagation()}
-          className="max-h-full max-w-full rounded-lg object-contain"
-          draggable={false}
-        />
+        {photo.kind === 'video' ? (
+          <video
+            key={photo.id}
+            src={fullUrl}
+            poster={photo.media.thumb.url}
+            controls
+            playsInline
+            preload="metadata"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-full max-w-full rounded-lg bg-black object-contain"
+          />
+        ) : (
+          <img
+            src={fullUrl}
+            alt={photo.caption || '照片'}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-full max-w-full rounded-lg object-contain"
+            draggable={false}
+          />
+        )}
         <button
           type="button"
           aria-label="下一张"
@@ -189,6 +229,8 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
         {renderCaption?.(photo)}
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#F3E4D8]/60">
           <span>{photoDateText(photo)}</span>
+          {photo.kind === 'video' && photo.durationMs ? <span>时长 {fmtDuration(photo.durationMs)}</span> : null}
+          {photo.kind === 'video' ? <span>视频</span> : null}
           {photo.tags.map((t) => (
             <span key={t}>#{t}</span>
           ))}

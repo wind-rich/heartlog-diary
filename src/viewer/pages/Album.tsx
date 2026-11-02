@@ -85,7 +85,11 @@ export default function Album() {
         <div>
           <div className="v-eyebrow">A COLLECTION OF LIGHT</div>
           <h1>光影收藏</h1>
-          <p>共 {all.length} 张照片 · 按拍摄月份整理，点开可完整查看并左右切换。</p>
+          <p>
+            共 {all.length} 项（照片 {all.filter((p) => p.kind !== 'video').length}
+            {all.some((p) => p.kind === 'video') ? ` · 视频 ${all.filter((p) => p.kind === 'video').length}` : ''}）
+            · 按拍摄月份整理，点开可完整查看并左右切换。
+          </p>
         </div>
         {editable && reload && (
           <Suspense fallback={null}>

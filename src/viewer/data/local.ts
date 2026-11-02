@@ -65,6 +65,8 @@ export async function buildLocalSnapshot(): Promise<PublishedSnapshot | null> {
     return {
       id: p.id,
       personId: p.personId,
+      kind: p.kind ?? 'image',
+      durationMs: p.durationMs,
       mime: p.mime,
       size: p.size,
       takenAt: p.takenAt,
