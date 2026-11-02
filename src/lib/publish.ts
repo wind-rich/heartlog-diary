@@ -297,7 +297,12 @@ export async function publishToCloud(
     onProgress({ phase: 'photos', done, total: photos.length, label: '上传照片' })
   }
 
-  /* ---- 视频：封面进媒体表，原件进对象存储，快照里放签名地址 ---- */
+  /** 后端不认 x-upsert：对象已存在时直接 409，这里按成功处理（对象按 photo id 不可变） */
+function isAlreadyExists(message: string | undefined): boolean {
+  return /already\s*exists|resource\s*exist|STORAGE_KEY_ALREADY_EXISTS|文件已存在/i.test(message ?? '')
+}
+
+/* ---- 视频：封面进媒体表，原件进对象存储，快照里放签名地址 ---- */
   const VIDEO_MAX_BYTES = 300 * 1024 * 1024
   const VIDEO_URL_TTL = 365 * 24 * 3600
   const videoUrls = new Map<string, string>()
@@ -325,7 +330,9 @@ export async function publishToCloud(
         const ext = (v.mime.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4'
         const path = cloud.storage.userPath(session.user.id, `public/videos/${v.id}.${ext}`)
         const up = await cloud.storage.upload(path, v.blob, { contentType: v.mime, upsert: true })
-        if (up.error) throw new Error(up.error.message || '原件上传失败')
+        if (up.error && !isAlreadyExists(up.error.message)) {
+          throw new Error(up.error.message || '原件上传失败')
+        }
         const signed = await cloud.storage.createSignedUrl(path, VIDEO_URL_TTL)
         if (signed.error || !signed.data?.signedUrl) {
           throw new Error(signed.error?.message || '获取播放地址失败')
@@ -354,9 +361,10 @@ export async function publishToCloud(
    */
   if (errors.length > 0) {
     const head = errors.slice(0, 3).join('；')
-    const more = errors.length > 3 ? `…等 ${errors.length} 张` : ''
+    const more = errors.length > 3 ? `…等 ${errors.length} 项` : ''
+    const scope = videos.length ? `${photos.length} 张照片、${videos.length} 段视频` : `${photos.length} 张照片`
     throw new PublishError(
-      `${errors.length}/${photos.length} 张照片上传失败，已中止发布（公网页仍是上一版，未产生不一致快照）。失败：${head}${more}`,
+      `${errors.length} 项上传失败（共 ${scope}），已中止发布（公网页仍是上一版，未产生不一致快照）。失败：${head}${more}`,
     )
   }
 
