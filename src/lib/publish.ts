@@ -86,7 +86,8 @@ async function hasSession(): Promise<boolean> {
 
 interface MediaRow {
   photo_id: string
-  kind: 'thumb' | 'web'
+  /** thumb/web 为图片两格；视频原件按 `vid:0000`、`vid:0001` 切片 */
+  kind: 'thumb' | 'web' | `vid:${string}`
   mime: string
   bytes: number
   data_b64: string
@@ -183,7 +184,7 @@ async function upsertMedia(rows: MediaRow[], publishId: string): Promise<void> {
 function portableSnapshot(
   snapshot: PublishedSnapshot,
   publishId: string,
-  videoUrls: Map<string, string> = new Map(),
+  videoChunks: Map<string, number> = new Map(),
 ): PublishedSnapshot {
   return {
     ...snapshot,
@@ -193,14 +194,14 @@ function portableSnapshot(
       publishedAt: new Date().toISOString(),
     },
     photos: snapshot.photos.map((p) => {
-      const signed = videoUrls.get(p.id)
-      if (signed) {
+      const chunks = videoChunks.get(p.id)
+      if (chunks) {
         return {
           ...p,
           kind: 'video' as const,
           media: {
             thumb: { ...p.media.thumb, url: '' },
-            full: { ...p.media.full, url: signed },
+            full: { ...p.media.full, url: '', chunkCount: chunks },
           },
         }
       }
@@ -227,7 +228,7 @@ export async function publishToCloud(
 
   onProgress({ phase: 'prepare', done: 0, total: 1, label: '整理内容' })
   await assertGameContentPublishable()
-  const session = await requireSession()
+  await requireSession()
   const snapshot = await buildLocalSnapshot()
   if (!snapshot) throw new PublishError('本机还没有内容，先记点什么再发布')
 
@@ -297,15 +298,16 @@ export async function publishToCloud(
     onProgress({ phase: 'photos', done, total: photos.length, label: '上传照片' })
   }
 
-  /** 后端不认 x-upsert：对象已存在时直接 409，这里按成功处理（对象按 photo id 不可变） */
-function isAlreadyExists(message: string | undefined): boolean {
-  return /already\s*exists|resource\s*exist|STORAGE_KEY_ALREADY_EXISTS|文件已存在/i.test(message ?? '')
-}
-
-/* ---- 视频：封面进媒体表，原件进对象存储，快照里放签名地址 ---- */
-  const VIDEO_MAX_BYTES = 300 * 1024 * 1024
-  const VIDEO_URL_TTL = 365 * 24 * 3600
-  const videoUrls = new Map<string, string>()
+  /* ---- 视频：封面一格 + 原件切片，全部走媒体表 ----
+   *
+   * 为什么不用对象存储签名地址：后端签名有效期上限 1 小时
+   *（Signed URL expiry must be an integer between 1 and 3600 seconds），
+   * 写进快照给访客用不了一小时就失效。媒体表本来就允许访客匿名读，
+   * 把原件切片写进去、访客端拼回 Blob 播放，不依赖签名也不依赖公开 bucket。
+   */
+  const VIDEO_MAX_BYTES = 80 * 1024 * 1024
+  const VIDEO_CHUNK_BYTES = 512 * 1024
+  const videoChunkCount = new Map<string, number>()
   if (videos.length) {
     let vdone = 0
     onProgress({ phase: 'photos', done: 0, total: videos.length, label: '上传视频' })
@@ -327,18 +329,38 @@ function isAlreadyExists(message: string | undefined): boolean {
         } else {
           skipped++
         }
-        const ext = (v.mime.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4'
-        const path = cloud.storage.userPath(session.user.id, `public/videos/${v.id}.${ext}`)
-        const up = await cloud.storage.upload(path, v.blob, { contentType: v.mime, upsert: true })
-        if (up.error && !isAlreadyExists(up.error.message)) {
-          throw new Error(up.error.message || '原件上传失败')
+        // 切片上传：每片独立指纹，视频没改时下次发布不会重传
+        const total = Math.ceil(v.size / VIDEO_CHUNK_BYTES)
+        if (total > 400) throw new Error(`分块过多（${total} 片），先剪短再发`)
+        for (let i = 0; i < total; i++) {
+          const start = i * VIDEO_CHUNK_BYTES
+          const part = v.blob.slice(start, Math.min(start + VIDEO_CHUNK_BYTES, v.size))
+          const chunk = new Blob([part], { type: 'application/octet-stream' })
+          const ck = `${v.id}:vid:${i}`
+          const cfp = await fingerprint(chunk)
+          if (existing.get(ck) === cfp) {
+            skipped++
+            continue
+          }
+          const cbuf = new Uint8Array(await chunk.arrayBuffer())
+          await upsertMedia(
+            [
+              {
+                photo_id: v.id,
+                kind: `vid:${String(i).padStart(4, '0')}`,
+                mime: 'application/octet-stream',
+                bytes: chunk.size,
+                data_b64: b64(cbuf),
+                fingerprint: cfp,
+              },
+            ],
+            publishId,
+          )
+          existing.set(ck, cfp)
+          uploaded++
+          bytesUploaded += chunk.size
         }
-        const signed = await cloud.storage.createSignedUrl(path, VIDEO_URL_TTL)
-        if (signed.error || !signed.data?.signedUrl) {
-          throw new Error(signed.error?.message || '获取播放地址失败')
-        }
-        videoUrls.set(v.id, signed.data.signedUrl)
-        bytesUploaded += v.size
+        videoChunkCount.set(v.id, total)
       } catch (err) {
         errors.push(`视频 ${v.id}：${(err as Error).message}`)
       } finally {
@@ -369,7 +391,7 @@ function isAlreadyExists(message: string | undefined): boolean {
   }
 
   onProgress({ phase: 'snapshot', done: 0, total: 1, label: '写入快照' })
-  const payload = portableSnapshot(snapshot, publishId, videoUrls)
+  const payload = portableSnapshot(snapshot, publishId, videoChunkCount)
 
   /**
    * 混版检查：快照里出现的每个 photo_id，在媒体表里必须 thumb + web 都齐。

@@ -35,6 +35,8 @@ export interface MediaAsset {
   /** 对象存储 key；原型阶段使用内联 data URL 直接占位 */
   key: string
   url: string
+  /** 视频分块数：原件按块存进媒体表，访客端按块拼回 Blob 播放 */
+  chunkCount?: number
   mime: string
   size: number
   hash?: string

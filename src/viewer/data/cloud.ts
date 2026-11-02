@@ -136,3 +136,97 @@ export function useFullPhotoUrl(photo: PublicPhoto | undefined): string {
 
   return url || photo?.media?.thumb?.url || ''
 }
+
+/* ------------------------------------------------------------------ */
+/* 视频：按块取回并拼成 Blob 播放地址                                  */
+/* ------------------------------------------------------------------ */
+
+const videoCache = new Map<string, string>()
+const videoInflight = new Map<string, Promise<string | null>>()
+
+function base64ToBuffer(input: string): ArrayBuffer {
+  const bin = atob(input)
+  const buf = new ArrayBuffer(bin.length)
+  const view = new Uint8Array(buf)
+  for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i)
+  return buf
+}
+
+/**
+ * 视频原件被切成 `vid:0000`、`vid:0001`… 一行一片存在媒体表里。
+ * 这里按顺序取回、拼成 Blob，再用 object URL 交给 <video>。
+ * 缺片时返回 null（宁可先不播，也不要播到一半断掉）。
+ */
+export async function ensureVideo(photoId: string, chunkCount?: number): Promise<string | null> {
+  const hit = videoCache.get(photoId)
+  if (hit) return hit
+  const running = videoInflight.get(photoId)
+  if (running) return running
+  const task = (async () => {
+    try {
+      // 分批取：一次拉整段视频会占几十 MB 内存，手机上容易直接崩
+      const BATCH = 12
+      const parts: BlobPart[] = []
+      let got = 0
+      for (let offset = 0; offset < 2000; offset += BATCH) {
+        const rows = await selectRows<{ kind: string; data_b64: string }>(
+          'heartlog_public_media',
+          `select=kind,data_b64&is_live=eq.true&photo_id=eq.${encodeURIComponent(
+            photoId,
+          )}&kind=like.vid%3A*&order=kind.asc&limit=${BATCH}&offset=${offset}`,
+        )
+        if (!rows.length) break
+        for (const r of rows) parts.push(base64ToBuffer(r.data_b64))
+        got += rows.length
+        if (rows.length < BATCH) break
+        if (chunkCount && got >= chunkCount) break
+      }
+      if (!got) return null
+      if (chunkCount && got < chunkCount) return null
+      const url = URL.createObjectURL(new Blob(parts, { type: 'video/mp4' }))
+      videoCache.set(photoId, url)
+      return url
+    } catch {
+      return null
+    } finally {
+      videoInflight.delete(photoId)
+    }
+  })()
+  videoInflight.set(photoId, task)
+  return task
+}
+
+export function cachedVideo(photoId: string): string | undefined {
+  return videoCache.get(photoId)
+}
+
+/** 视频播放地址：先看快照里有没有直链，没有就按块取（访客端主路径） */
+export function useVideoUrl(photo: PublicPhoto | undefined): string {
+  const id = photo?.id ?? ''
+  const isVideo = photo?.kind === 'video'
+  const direct = isVideo ? photo?.media?.full?.url ?? '' : ''
+  const chunkCount = photo?.media?.full?.chunkCount
+  const [url, setUrl] = useState(() => direct || (id ? cachedVideo(id) ?? '' : ''))
+
+  useEffect(() => {
+    if (!id || !isVideo) return
+    if (direct) {
+      setUrl(direct)
+      return
+    }
+    const hit = cachedVideo(id)
+    if (hit) {
+      setUrl(hit)
+      return
+    }
+    let alive = true
+    void ensureVideo(id, chunkCount).then((u) => {
+      if (alive && u) setUrl(u)
+    })
+    return () => {
+      alive = false
+    }
+  }, [id, isVideo, direct, chunkCount])
+
+  return url
+}

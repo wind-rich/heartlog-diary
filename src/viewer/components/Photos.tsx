@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useFullPhotoUrl } from '../data/cloud'
+import { useFullPhotoUrl, useVideoUrl } from '../data/cloud'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, ImageOff, Play, RefreshCw, X } from 'lucide-react'
 import clsx from 'clsx'
@@ -110,6 +110,8 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
   const touchX = useRef<number | null>(null)
   // 云端模式没带图地址，按需取一次大图；静态模式直接返回原地址
   const fullUrl = useFullPhotoUrl(photo)
+  // 视频要先把分片从媒体表拼回 Blob：快照里没有直链，签名地址又只有 1 小时
+  const videoUrl = useVideoUrl(photo)
 
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -189,16 +191,22 @@ export function Lightbox({ photos, index, onClose, onIndexChange, onOpenEntry, r
           <ChevronLeft size={20} />
         </button>
         {photo.kind === 'video' ? (
-          <video
-            key={photo.id}
-            src={fullUrl}
+          videoUrl ? (
+            <video
+              key={photo.id}
+              src={videoUrl}
             poster={photo.media.thumb.url}
             controls
             playsInline
             preload="metadata"
-            onClick={(e) => e.stopPropagation()}
-            className="max-h-full max-w-full rounded-lg bg-black object-contain"
-          />
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-full max-w-full rounded-lg bg-black object-contain"
+            />
+          ) : (
+            <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-white/10 text-[12px] text-[#F3E4D8]/70">
+              视频加载中…
+            </div>
+          )
         ) : (
           <img
             src={fullUrl}
